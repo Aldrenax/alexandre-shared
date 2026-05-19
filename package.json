@@ -1,12 +1,22 @@
 {
   "name": "alexandre-shared",
-  "version": "0.1.0",
-  "description": "Code partagé entre les sites du réseau Alexandre Chaimbault (Investissement, Tesla, Entreprise, Affiliation, Logiciels). STYLE_GUIDE éditorial, builders Schema.org, helpers UTM.",
+  "version": "0.2.0",
+  "description": "Code partagé entre les sites du réseau Alexandre Chaimbault (Investissement, Tesla, Entreprise, Affiliation, Logiciels). STYLE_GUIDE éditorial, builders Schema.org, helpers UTM, pipeline YouTube + Whisper.",
   "type": "module",
   "exports": {
     "./style-guide": "./STYLE_GUIDE_BASE.md",
     "./lib/seo.mjs": "./lib/seo.mjs",
-    "./lib/utm.mjs": "./lib/utm.mjs"
+    "./lib/utm.mjs": "./lib/utm.mjs",
+    "./lib/youtube.mjs": "./lib/youtube.mjs",
+    "./lib/whisper.mjs": "./lib/whisper.mjs"
+  },
+  "peerDependencies": {
+    "rss-parser": "^3.13.0",
+    "youtubei.js": "^17.0.0"
+  },
+  "peerDependenciesMeta": {
+    "rss-parser": { "optional": true },
+    "youtubei.js": { "optional": true }
   },
   "files": [
     "STYLE_GUIDE_BASE.md",
