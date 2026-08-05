@@ -9,6 +9,8 @@ Type=oneshot
 User=root
 WorkingDirectory=/opt/alexandre-media-engine/current
 EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
+Environment=HF_HOME=/var/lib/alexandre-media-engine/cache/huggingface
+Environment=XDG_CACHE_HOME=/var/lib/alexandre-media-engine/cache
 ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs video --json
 TimeoutStartSec=2h
 UMask=0027
