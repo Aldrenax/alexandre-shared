@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { getChannelFeed, getVideoInfo, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 import { activeMedia, assertValidRegistry, mediaBySlug, sourcesForMedia } from './registry.mjs';
 import { collectSources, enrichCandidateEvidence } from './source-collector.mjs';
@@ -42,11 +42,54 @@ function xItems(result, media) {
   }));
 }
 
-async function materializeBanner(imageUrl, destination, fetchImpl = fetch) {
-  if (!/^https?:\/\//.test(imageUrl || '')) throw new Error('imageUrl Hermes invalide');
-  const response = await fetchImpl(imageUrl, { signal: AbortSignal.timeout(60_000) });
-  if (!response.ok) throw new Error(`Téléchargement bannière HTTP ${response.status}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
+const HERMES_CONTAINER_IMAGE_ROOT = '/opt/data/cache/images';
+const DEFAULT_HERMES_HOST_IMAGE_ROOT = '/var/lib/hermes-agent/cache/images';
+const MAX_BANNER_BYTES = 30 * 1024 * 1024;
+
+function localHermesImageBuffer(imageSource, hostRoot) {
+  let relativePath;
+  if (imageSource.startsWith(`${HERMES_CONTAINER_IMAGE_ROOT}/`)) {
+    relativePath = imageSource.slice(HERMES_CONTAINER_IMAGE_ROOT.length + 1);
+  } else if (imageSource.startsWith(`${hostRoot}/`)) {
+    relativePath = imageSource.slice(hostRoot.length + 1);
+  } else {
+    throw new Error('Source locale de bannière hors cache Hermes');
+  }
+
+  const realRoot = realpathSync(hostRoot);
+  const requestedPath = resolve(realRoot, relativePath);
+  const realPath = realpathSync(requestedPath);
+  if (!realPath.startsWith(`${realRoot}${sep}`)) throw new Error('Source locale de bannière hors cache Hermes');
+  const stats = statSync(realPath);
+  if (!stats.isFile()) throw new Error('Source locale de bannière non fichier');
+  if (stats.size > MAX_BANNER_BYTES) throw new Error(`Bannière trop volumineuse: ${stats.size} octets`);
+  return readFileSync(realPath);
+}
+
+async function bannerBuffer(imageSource, fetchImpl, { hermesHostImageRoot } = {}) {
+  if (typeof imageSource !== 'string' || !imageSource.trim()) throw new Error('Source de bannière Hermes invalide');
+  const source = imageSource.trim();
+  if (/^https?:\/\//.test(source)) {
+    const response = await fetchImpl(source, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) throw new Error(`Téléchargement bannière HTTP ${response.status}`);
+    const contentLength = Number(response.headers?.get?.('content-length') || 0);
+    if (contentLength > MAX_BANNER_BYTES) throw new Error(`Bannière trop volumineuse: ${contentLength} octets`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+  const dataMatch = source.match(/^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=\s]+)$/i);
+  if (dataMatch) {
+    const buffer = Buffer.from(dataMatch[1].replace(/\s/g, ''), 'base64');
+    if (buffer.length > MAX_BANNER_BYTES) throw new Error(`Bannière trop volumineuse: ${buffer.length} octets`);
+    return buffer;
+  }
+  return localHermesImageBuffer(
+    source,
+    hermesHostImageRoot || process.env.HERMES_IMAGE_CACHE_DIR || DEFAULT_HERMES_HOST_IMAGE_ROOT,
+  );
+}
+
+async function materializeBanner(imageSource, destination, fetchImpl = fetch, options = {}) {
+  const buffer = await bannerBuffer(imageSource, fetchImpl, options);
   if (buffer.length < 8_000) throw new Error(`Bannière anormalement petite: ${buffer.length} octets`);
   let sharp;
   try {
@@ -319,9 +362,10 @@ export class MediaEngine {
 
     if (generateBanner && contentType !== 'video') {
       const bannerResult = await this.hermes.generateBannerJson(buildBannerPrompt({ media, draft }));
-      if (!bannerResult?.success || !bannerResult.imageUrl) throw new Error(`Génération de bannière échouée pour ${draft.slug}`);
+      const imageSource = bannerResult?.imageSource || bannerResult?.imageUrl || bannerResult?.image;
+      if (!bannerResult?.success || !imageSource) throw new Error(`Génération de bannière échouée pour ${draft.slug}`);
       const bannerPath = join(this.store.assetsDir, media.slug, `${draft.slug}.webp`);
-      await materializeBanner(bannerResult.imageUrl, bannerPath, this.fetchImpl);
+      await materializeBanner(imageSource, bannerPath, this.fetchImpl);
       draft.banner = {
         path: bannerPath,
         alt: bannerResult.alt || draft.bannerBrief?.alt || draft.title,
@@ -660,4 +704,4 @@ export class MediaEngine {
   }
 }
 
-export { downloadAsset, materializeBanner };
+export { bannerBuffer, downloadAsset, materializeBanner };

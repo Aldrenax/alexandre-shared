@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -25,7 +25,7 @@ import { auditDraftOutboundLinks, formatVideoDuration, renderMdxDraft } from '..
 import { resolveTopicId, splitMessage } from '../media/telegram.mjs';
 import { guideCandidate, selectGuideOpportunity } from '../media/guide-planner.mjs';
 import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '../media/publication-worker.mjs';
-import { downloadFirstAvailableAsset, MediaEngine, offerForUrl, shouldGenerateDraftForEvent } from '../media/engine.mjs';
+import { downloadFirstAvailableAsset, materializeBanner, MediaEngine, offerForUrl, shouldGenerateDraftForEvent } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
 import {
@@ -105,6 +105,26 @@ test('miniature YouTube: le CDN standard prend le relais si les métadonnées so
   });
   assert.match(selected.url, /hqdefault\.jpg$/);
   assert.equal(requested.length, 2);
+});
+
+test('bannière Hermes: un chemin conteneur est résolu uniquement dans le cache autorisé', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'hermes-image-cache-'));
+  const cache = join(root, 'cache', 'images');
+  mkdirSync(cache, { recursive: true });
+  const source = join(cache, 'generated.png');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><rect width="1200" height="630" fill="#123456"/><desc>${'preuve'.repeat(1_500)}</desc></svg>`;
+  writeFileSync(source, svg);
+  const destination = join(root, 'assets', 'banner.webp');
+
+  await materializeBanner('/opt/data/cache/images/generated.png', destination, fetch, {
+    hermesHostImageRoot: cache,
+  });
+  assert.equal(existsSync(destination), true);
+
+  await assert.rejects(
+    materializeBanner('/etc/passwd', join(root, 'assets', 'invalid.webp'), fetch, { hermesHostImageRoot: cache }),
+    /hors cache Hermes/,
+  );
 });
 
 test('affiliation vidéo: le chemin Pretty Link exact prévaut sur le domaine partagé', () => {

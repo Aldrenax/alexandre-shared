@@ -17,5 +17,5 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/opt/alexandre-media-engine/current /var/lib/hermes-agent/business-data
+ReadOnlyPaths=/opt/alexandre-media-engine/current /var/lib/hermes-agent/business-data /var/lib/hermes-agent/cache/images
 ReadWritePaths=/var/lib/alexandre-media-engine /var/lib/hermes-agent/media-engine

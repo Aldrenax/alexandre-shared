@@ -13,7 +13,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 6;
+export const EDITORIAL_REVISION = 7;
 
 function normalizedSlug(value, fallback = '') {
   return String(value || fallback)
@@ -174,8 +174,10 @@ export function buildBannerPrompt({ media, draft }) {
     'Style: crédible, éditorial, lisible sur mobile, fort contraste, sans esthétique publicitaire agressive.',
     'Interdictions: logo inventé, faux écran, faux chiffre, faux visage, marque déformée, petit texte illisible.',
     'Utilise l’outil image_gen avec aspect_ratio="landscape".',
-    'Après génération, retourne le résultat sous ce schéma:',
-    '{"success":true,"imageUrl":"URL retournée par image_gen","alt":"texte alternatif factuel","width":1200,"height":630}',
+    'Après génération, copie sans transformation la valeur `image` retournée par image_gen dans `imageSource`.',
+    'Cette valeur peut être une URL, une data URL ou un chemin absolu dans le cache Hermes.',
+    'Retourne le résultat sous ce schéma:',
+    '{"success":true,"imageSource":"valeur image exacte retournée par image_gen","alt":"texte alternatif factuel","width":1200,"height":630}',
   ].join('\n');
 }
 
