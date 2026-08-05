@@ -29,6 +29,7 @@ import { MediaEngine } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
 import { ytDlpNetworkEnv } from '../lib/whisper.mjs';
+import { resolveVideoMetadata } from '../lib/youtube.mjs';
 
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
   assert.deepEqual(validateRegistry(), []);
@@ -46,6 +47,16 @@ test('transcription YouTube: le proxy protégé est transmis à yt-dlp sans vale
   const env = ytDlpNetworkEnv({ HTTP_PROXY_URL: '  http://proxy.example:8080  ' });
   assert.equal(env.HTTPS_PROXY, 'http://proxy.example:8080');
   assert.equal(env.https_proxy, 'http://proxy.example:8080');
+});
+
+test('métadonnées YouTube: yt-dlp prévaut pour détecter un Short et sa miniature', () => {
+  const metadata = resolveVideoMetadata(
+    { duration: 120, thumbnail: [{ width: 120, height: 90 }] },
+    { duration: 37, thumbnails: [{ url: 'https://i.ytimg.com/short.jpg', width: 720, height: 1280 }] },
+  );
+  assert.equal(metadata.duration, 37);
+  assert.equal(metadata.isShort, true);
+  assert.equal(metadata.thumbnails[0].url, 'https://i.ytimg.com/short.jpg');
 });
 
 test('collecteur page: ETag, changement et santé sans confondre échec et absence', async () => {
