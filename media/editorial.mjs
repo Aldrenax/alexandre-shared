@@ -13,7 +13,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 5;
+export const EDITORIAL_REVISION = 6;
 
 function normalizedSlug(value, fallback = '') {
   return String(value || fallback)
@@ -26,7 +26,7 @@ function normalizedSlug(value, fallback = '') {
     .replace(/-+$/g, '');
 }
 
-function sourcePacket(candidate) {
+function sourcePacket(candidate, maximumExcerptLength = 3_000) {
   return (candidate.sources || []).map((source, index) => ({
     ref: `S${index + 1}`,
     name: source.sourceId,
@@ -35,7 +35,7 @@ function sourcePacket(candidate) {
     title: source.title,
     url: source.url,
     publishedAt: source.publishedAt,
-    excerpt: String(source.excerpt || '').slice(0, 3_000),
+    excerpt: String(source.excerpt || '').slice(0, maximumExcerptLength),
   }));
 }
 
@@ -83,7 +83,7 @@ function complianceInstructions(media) {
 
 function commonInstructions({ media, candidate, type, internalLinks, offer }) {
   const requirement = CONTENT_REQUIREMENTS[type];
-  const sources = sourcePacket(candidate);
+  const sources = sourcePacket(candidate, type === 'guide' ? 12_000 : 3_000);
   return [
     `Tu rédiges pour ${media.name} (${media.siteUrl}).`,
     `Rubrique obligatoire: ${requirement.section}.`,
@@ -140,7 +140,8 @@ function typeInstructions(type, context) {
   return [
     'ANGLE GUIDE:',
     '- Réponds exhaustivement à une intention durable et commerciale.',
-    '- Inclus critères de choix, étapes, limites, erreurs, alternatives, tableau comparatif et FAQ.',
+    '- Inclus critères de choix, étapes, limites, erreurs, tableau récapitulatif et FAQ.',
+    '- Ne compare des alternatives que si le paquet de sources les documente précisément.',
     '- L’offre est une recommandation contextualisée, pas le prétexte du guide.',
     '- Signale clairement ce qui doit être revérifié périodiquement.',
   ];

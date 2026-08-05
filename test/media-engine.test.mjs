@@ -399,6 +399,20 @@ test('rédaction vidéo: la source YouTube et l’offre exacte sont injectées s
   assert.equal(normalizeDraft({ ...draft, slug: 'deblock-dzqlm3aga_o' }, { contentType: 'video', candidate, media }).slug, 'deblock-dzqlm3aga-o');
 });
 
+test('rédaction guide: le paquet conserve les preuves détaillées sans imposer un comparatif inventé', () => {
+  const excerpt = 'preuve officielle détaillée '.repeat(400);
+  const prompt = buildEditorialPrompt({
+    media: mediaBySlug('logiciels'),
+    contentType: 'guide',
+    candidate: {
+      id: 'guide-hostinger', title: 'Créer un site avec Hostinger', score: 90, keywordMatches: ['hébergement web'],
+      sources: [{ sourceId: 'hostinger-tutorial', official: true, tier: 1, title: 'Tutoriel', url: 'https://www.hostinger.com/fr/tutoriels/site', excerpt }],
+    },
+  });
+  assert.match(prompt, /Ne compare des alternatives que si/);
+  assert.ok(prompt.includes(excerpt.slice(0, 8_000)));
+});
+
 test('rédaction: le prompt reprend les mentions exigées par la QA réglementaire', () => {
   const candidate = {
     id: 'candidate-finance-1',
