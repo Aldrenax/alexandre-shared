@@ -83,7 +83,7 @@ try {
     console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|publish|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--json]');
     process.exitCode = 2;
   }
-  if (!dryRun && result !== undefined && ['collect', 'research', 'video', 'guide', 'publish', 'run'].includes(command)) {
+  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'publish', 'run'].includes(command)) {
     engine.store.initialize();
     const failedEntries = command === 'video' && Array.isArray(result)
       ? result.filter((entry) => entry?.failed)
