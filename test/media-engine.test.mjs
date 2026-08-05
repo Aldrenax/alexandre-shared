@@ -412,13 +412,22 @@ test('préflight: ChatGPT, topics et dépôts sont requis, xAI reste un enrichis
 
 test('recherche X: une panne Grok dégrade l’enrichissement sans interrompre le cycle RSS', async () => {
   const root = mkdtempSync(join(tmpdir(), 'media-x-degraded-'));
+  let xSearchCalls = 0;
   const engine = new MediaEngine({
     store: new MediaStateStore(root),
-    hermes: { xSearch: async () => { throw new Error('xai-oauth absent'); } },
+    hermes: {
+      authList: async () => ({ raw: 'openai-codex', providers: ['openai-codex'] }),
+      xSearch: async () => {
+        xSearchCalls += 1;
+        throw new Error('xai-oauth absent');
+      },
+    },
   });
   const results = await engine.researchX({ mediaSlug: 'logiciels' });
   assert.equal(results.length, 3);
   assert.ok(results.every((result) => result.degraded));
+  assert.ok(results.every((result) => result.degradedReason === 'xai-oauth absent'));
+  assert.equal(xSearchCalls, 0);
   const health = engine.healthReport({
     collectionResults: [{ sourceId: 'official', required: true, status: 'healthy' }],
     xResults: results,

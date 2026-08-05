@@ -132,10 +132,36 @@ export class MediaEngine {
   async researchX({ mediaSlug = null, dryRun = false, fromDate = '', toDate = '' } = {}) {
     const selected = this.selectedMedia(mediaSlug);
     const results = [];
+    let xaiAvailable = true;
+    let unavailableReason = '';
+    if (!dryRun) {
+      try {
+        const auth = await this.hermes.authList();
+        xaiAvailable = auth.providers.includes('xai-oauth');
+        if (!xaiAvailable) unavailableReason = 'xai-oauth absent';
+      } catch (error) {
+        xaiAvailable = false;
+        unavailableReason = `auth Hermes inaccessible: ${String(error?.message || error)}`;
+      }
+    }
     for (const media of selected) {
       for (const query of media.xQueries || []) {
         if (dryRun) {
           results.push({ mediaSlug: media.slug, query, planned: true, degraded: null, citations: [] });
+          continue;
+        }
+        if (!xaiAvailable) {
+          results.push({
+            mediaSlug: media.slug,
+            query,
+            answer: '',
+            citations: [],
+            posts: [],
+            degraded: true,
+            degradedReason: unavailableReason,
+            observedAt: new Date().toISOString(),
+            sourceId: 'x-search',
+          });
           continue;
         }
         let result;
@@ -159,6 +185,22 @@ export class MediaEngine {
       for (const search of media.officialXQueries || []) {
         if (dryRun) {
           results.push({ mediaSlug: media.slug, query: search.query, allowedHandles: search.allowedHandles, officialSearch: true, planned: true, degraded: null, citations: [] });
+          continue;
+        }
+        if (!xaiAvailable) {
+          results.push({
+            mediaSlug: media.slug,
+            query: search.query,
+            allowedHandles: search.allowedHandles,
+            officialSearch: true,
+            answer: '',
+            citations: [],
+            posts: [],
+            degraded: true,
+            degradedReason: unavailableReason,
+            observedAt: new Date().toISOString(),
+            sourceId: 'x-search',
+          });
           continue;
         }
         let result;
