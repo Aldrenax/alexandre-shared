@@ -25,7 +25,14 @@ import { auditDraftOutboundLinks, formatVideoDuration, renderMdxDraft } from '..
 import { resolveTopicId, splitMessage } from '../media/telegram.mjs';
 import { guideCandidate, selectGuideOpportunity } from '../media/guide-planner.mjs';
 import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '../media/publication-worker.mjs';
-import { downloadFirstAvailableAsset, materializeBanner, MediaEngine, offerForUrl, shouldGenerateDraftForEvent } from '../media/engine.mjs';
+import {
+  downloadFirstAvailableAsset,
+  materializeBanner,
+  MediaEngine,
+  offerForUrl,
+  publishedVideoPath,
+  shouldGenerateDraftForEvent,
+} from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
 import {
@@ -151,6 +158,26 @@ test('cycle vidéo: un Short RSS est écarté avant toute métadonnée coûteuse
   assert.equal(result[0].video.videoId, 'long-1');
   assert.equal(result[0].ignoredShorts, 1);
   assert.equal(infoCalls, 0);
+});
+
+test('cycle vidéo: une page existante empêche de recréer un brouillon du backlog', async () => {
+  assert.equal(
+    publishedVideoPath([{ path: '/videos/2026-06-12-laver-tesla-ryhf3foxqze/' }], 'ryHF3fOxQzE'),
+    '/videos/2026-06-12-laver-tesla-ryhf3foxqze/',
+  );
+  const engine = new MediaEngine({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-published-'))),
+    internalLinks: {
+      'tesla-tech': [{ path: '/videos/2026-06-12-laver-tesla-ryhf3foxqze/' }],
+    },
+    getChannelFeedImpl: async () => [
+      { videoId: 'ryHF3fOxQzE', link: 'https://www.youtube.com/watch?v=ryHF3fOxQzE', title: 'Déjà publiée' },
+      { videoId: 'newVideo123', link: 'https://www.youtube.com/watch?v=newVideo123', title: 'Nouvelle vidéo' },
+    ],
+  });
+  const result = await engine.runVideoCycle({ mediaSlug: 'tesla-tech', dryRun: true });
+  assert.equal(result[0].planned, true);
+  assert.equal(result[0].video.videoId, 'newVideo123');
 });
 
 test('cycle vidéo: une panne est isolée et reçoit un délai de reprise', async () => {

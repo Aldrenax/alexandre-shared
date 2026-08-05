@@ -132,6 +132,16 @@ export async function downloadFirstAvailableAsset(candidates, destination, fetch
   throw new Error(`Aucun asset YouTube exploitable\n${errors.join('\n')}`);
 }
 
+export function publishedVideoPath(internalLinks = [], videoId = '') {
+  const normalizedId = String(videoId).trim().toLowerCase();
+  if (!normalizedId) return null;
+  const link = internalLinks.find((entry) => {
+    const value = typeof entry === 'string' ? entry : entry?.path || entry?.url || '';
+    return String(value).toLowerCase().includes(normalizedId);
+  });
+  return typeof link === 'string' ? link : link?.path || link?.url || null;
+}
+
 export function offerForUrl(offers, mediaSlug, rawUrl) {
   if (!rawUrl) return null;
   let observed;
@@ -416,7 +426,19 @@ export class MediaEngine {
       let unseen = null;
       try {
         const feed = await this.getChannelFeed(media.channelId);
-        const pending = feed.filter((entry) => shouldGenerateDraftForEvent(this.store, `video-draft:${media.slug}:${entry.videoId}`));
+        const mediaLinks = this.internalLinks[media.slug] || [];
+        const alreadyPublished = feed.filter((entry) => publishedVideoPath(mediaLinks, entry.videoId));
+        if (!dryRun) {
+          for (const entry of alreadyPublished) {
+            this.store.markEvent(`video-draft:${media.slug}:${entry.videoId}`, {
+              status: 'already-published',
+              path: publishedVideoPath(mediaLinks, entry.videoId),
+            });
+          }
+        }
+        const publishedIds = new Set(alreadyPublished.map((entry) => entry.videoId));
+        const pending = feed.filter((entry) => !publishedIds.has(entry.videoId)
+          && shouldGenerateDraftForEvent(this.store, `video-draft:${media.slug}:${entry.videoId}`));
         const shortsFromFeed = pending.filter((entry) => String(entry.link || '').includes('/shorts/'));
         if (!dryRun) {
           for (const short of shortsFromFeed) {
