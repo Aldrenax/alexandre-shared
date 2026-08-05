@@ -15,6 +15,7 @@ Environment=XDG_CACHE_HOME=/var/lib/alexandre-media-engine/cache
 Environment=WHISPER_MODEL=base
 Environment=WHISPER_CPU_THREADS=2
 Environment=WHISPER_CHUNK_SECONDS=30
+Environment=WHISPER_TRANSCRIPT_CACHE_DIR=/var/lib/alexandre-media-engine/cache/transcripts
 Environment=OMP_NUM_THREADS=2
 Environment=MKL_NUM_THREADS=2
 Environment=MALLOC_ARENA_MAX=2

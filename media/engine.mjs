@@ -89,14 +89,22 @@ export async function downloadFirstAvailableAsset(candidates, destination, fetch
   throw new Error(`Aucun asset YouTube exploitable\n${errors.join('\n')}`);
 }
 
-function offerForUrl(offers, mediaSlug, rawUrl) {
+export function offerForUrl(offers, mediaSlug, rawUrl) {
   if (!rawUrl) return null;
-  let hostname;
-  try { hostname = new URL(rawUrl).hostname.replace(/^www\./, ''); } catch { return null; }
-  return offers.find((offer) => {
-    if (offer.status !== 'active' || !offer.channels?.includes(mediaSlug)) return false;
-    try { return new URL(offer.url).hostname.replace(/^www\./, '') === hostname; } catch { return false; }
-  }) || null;
+  let observed;
+  try { observed = new URL(rawUrl); } catch { return null; }
+  const normalizedPath = (url) => url.pathname.replace(/\/+$/, '') || '/';
+  const eligible = offers.filter((offer) => offer.channels?.includes(mediaSlug)
+    && offer.status === 'active'
+    && /^https?:\/\//.test(offer.url || ''));
+  const exact = eligible.find((offer) => {
+    const candidate = new URL(offer.url);
+    return candidate.origin === observed.origin && normalizedPath(candidate) === normalizedPath(observed);
+  });
+  if (exact) return exact;
+  const sameHost = eligible.filter((offer) => new URL(offer.url).hostname.replace(/^www\./, '')
+    === observed.hostname.replace(/^www\./, ''));
+  return sameHost.length === 1 ? sameHost[0] : null;
 }
 
 export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REVISION) {

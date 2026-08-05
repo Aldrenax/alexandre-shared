@@ -13,7 +13,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 2;
+export const EDITORIAL_REVISION = 3;
 
 function sourcePacket(candidate) {
   return (candidate.sources || []).map((source, index) => ({
@@ -167,7 +167,24 @@ export function buildBannerPrompt({ media, draft }) {
 export function normalizeDraft(payload, { contentType, candidate, media }) {
   if (payload?.status === 'blocked') return payload;
   const requirement = CONTENT_REQUIREMENTS[contentType];
-  const body = String(payload?.body || '').trim();
+  const candidateSourceUrls = (candidate.sources || [])
+    .map((source) => source.url)
+    .filter((url) => /^https?:\/\//.test(url || ''));
+  const sourceUrls = [...new Set([
+    ...(payload?.sourceUrls || []).filter((url) => /^https?:\/\//.test(url)),
+    ...candidateSourceUrls,
+  ])];
+  let body = String(payload?.body || '').trim();
+  if (contentType === 'video' && candidate.primaryUrl && !body.includes(`](${candidate.primaryUrl})`)) {
+    body = `> [Voir la vidéo originale](${candidate.primaryUrl})\n\n${body}`;
+  }
+  if (contentType === 'video' && candidate.offer?.url && !body.includes(`](${candidate.offer.url})`)) {
+    body = `> [Découvrir ${candidate.offer.name} via mon lien affilié](${candidate.offer.url})\n\n${body}`;
+  }
+  if (sourceUrls.length && !sourceUrls.some((url) => body.includes(`](${url})`))) {
+    const references = sourceUrls.slice(0, 4).map((url, index) => `- [Source ${index + 1}](${url})`).join('\n');
+    body = `${body}\n\n## Sources\n\n${references}`;
+  }
   const wordCount = body.split(/\s+/).filter(Boolean).length;
   const generatedAt = new Date();
   return {
@@ -182,7 +199,8 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
     description: String(payload?.description || '').trim().slice(0, 180),
     body,
     wordCount,
-    sourceUrls: [...new Set((payload?.sourceUrls || []).filter((url) => /^https?:\/\//.test(url)))],
+    sourceUrls,
+    offer: candidate.offer || null,
     claims: Array.isArray(payload?.claims) ? payload.claims : [],
     generatedAt: generatedAt.toISOString(),
     scheduledPublishAt: recommendedPublicationTime(contentType, {

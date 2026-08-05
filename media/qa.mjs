@@ -22,6 +22,9 @@ function complianceIssues(draft, media) {
     }
   }
   if (draft.offer && !body.includes('affili')) issues.push(issue('affiliate-disclosure-missing', 'Mention d’affiliation manquante'));
+  if (draft.offer?.url && !String(draft.body || '').includes(`](${draft.offer.url})`)) {
+    issues.push(issue('affiliate-link-missing', 'Lien de l’offre validée manquant'));
+  }
   return issues;
 }
 

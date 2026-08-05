@@ -25,10 +25,12 @@ import { auditDraftOutboundLinks, formatVideoDuration, renderMdxDraft } from '..
 import { resolveTopicId, splitMessage } from '../media/telegram.mjs';
 import { guideCandidate, selectGuideOpportunity } from '../media/guide-planner.mjs';
 import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '../media/publication-worker.mjs';
-import { downloadFirstAvailableAsset, MediaEngine, shouldGenerateDraftForEvent } from '../media/engine.mjs';
+import { downloadFirstAvailableAsset, MediaEngine, offerForUrl, shouldGenerateDraftForEvent } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
-import { runYtDlpWithRetries, stickyProxyUrl, ytDlpNetworkEnv } from '../lib/whisper.mjs';
+import {
+  readCachedTranscript, runYtDlpWithRetries, stickyProxyUrl, writeCachedTranscript, ytDlpNetworkEnv,
+} from '../lib/whisper.mjs';
 import { resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
@@ -69,6 +71,14 @@ test('transcription YouTube: chaque reprise renouvelle la session proxy', async 
   assert.equal(new Set(attempts).size, 3);
 });
 
+test('transcription YouTube: un résultat complet est conservé dans le cache local', () => {
+  const root = mkdtempSync(join(tmpdir(), 'whisper-cache-'));
+  const env = { WHISPER_TRANSCRIPT_CACHE_DIR: root };
+  const transcript = 'transcription '.repeat(50);
+  assert.ok(writeCachedTranscript('dzQLM3agA_o', transcript, env));
+  assert.equal(readCachedTranscript('dzQLM3agA_o', env), transcript.trim());
+});
+
 test('métadonnées YouTube: yt-dlp prévaut pour détecter un Short et sa miniature', () => {
   const metadata = resolveVideoMetadata(
     { duration: 120, thumbnail: [{ width: 120, height: 90 }] },
@@ -94,6 +104,15 @@ test('miniature YouTube: le CDN standard prend le relais si les métadonnées so
   });
   assert.match(selected.url, /hqdefault\.jpg$/);
   assert.equal(requested.length, 2);
+});
+
+test('affiliation vidéo: le chemin Pretty Link exact prévaut sur le domaine partagé', () => {
+  const offers = [
+    { id: 'boursobank', status: 'active', channels: ['investissement'], url: 'https://cyberindependant.com/boursorama' },
+    { id: 'deblock', status: 'active', channels: ['investissement'], url: 'https://cyberindependant.com/deblock' },
+  ];
+  assert.equal(offerForUrl(offers, 'investissement', 'https://cyberindependant.com/deblock/').id, 'deblock');
+  assert.equal(offerForUrl(offers, 'investissement', 'https://cyberindependant.com/inconnu'), null);
 });
 
 test('cycle vidéo: un Short RSS est écarté avant toute métadonnée coûteuse', async () => {
@@ -355,6 +374,25 @@ test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
     shadowDays: 7,
     now: new Date(Date.parse(draft.scheduledPublishAt) + 1),
   }).allowed, true);
+});
+
+test('rédaction vidéo: la source YouTube et l’offre exacte sont injectées sans dépendre du modèle', () => {
+  const media = mediaBySlug('investissement');
+  const candidate = {
+    id: 'youtube-dzQLM3agA_o', mediaSlug: 'investissement', primaryUrl: 'https://www.youtube.com/watch?v=dzQLM3agA_o',
+    title: 'Avis Deblock', status: 'qualified', corroborated: true, rumor: false,
+    sources: [{ sourceId: 'youtube-investissement', url: 'https://www.youtube.com/watch?v=dzQLM3agA_o' }],
+    offer: { id: 'deblock', name: 'Deblock', url: 'https://cyberindependant.com/deblock' },
+  };
+  const draft = normalizeDraft({
+    title: 'Avis Deblock', slug: 'avis-deblock', description: 'Un avis complet sur Deblock.', body: '## Mon avis\n\nTexte utile.',
+    sourceUrls: [], claims: [{ statement: 'Avis issu de la vidéo', sourceRefs: ['S1'] }],
+  }, { contentType: 'video', candidate, media });
+
+  assert.match(draft.body, /\[Voir la vidéo originale\]\(https:\/\/www\.youtube\.com\/watch\?v=dzQLM3agA_o\)/);
+  assert.match(draft.body, /\[Découvrir Deblock via mon lien affilié\]\(https:\/\/cyberindependant\.com\/deblock\)/);
+  assert.deepEqual(draft.sourceUrls, ['https://www.youtube.com/watch?v=dzQLM3agA_o']);
+  assert.equal(draft.offer.id, 'deblock');
 });
 
 test('rédaction: le prompt reprend les mentions exigées par la QA réglementaire', () => {
