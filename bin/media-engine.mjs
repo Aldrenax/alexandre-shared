@@ -85,7 +85,18 @@ try {
   }
   if (!dryRun && result !== undefined && ['collect', 'research', 'video', 'guide', 'publish', 'run'].includes(command)) {
     engine.store.initialize();
-    engine.store.recordRun(command, { status: 'success', mediaSlug: mediaSlug || null });
+    const failedEntries = command === 'video' && Array.isArray(result)
+      ? result.filter((entry) => entry?.failed)
+      : [];
+    const status = failedEntries.length ? 'degraded' : 'success';
+    engine.store.recordRun(command, {
+      status,
+      mediaSlug: mediaSlug || null,
+      ...(failedEntries.length ? {
+        failures: failedEntries.map((entry) => ({ mediaSlug: entry.mediaSlug, videoId: entry.videoId, error: entry.error || entry.reason })),
+      } : {}),
+    });
+    if (failedEntries.length) process.exitCode = 1;
   }
 } catch (error) {
   if (!dryRun) {

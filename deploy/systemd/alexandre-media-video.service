@@ -3,6 +3,7 @@ Description=Hermes Media Engine - vidéos vers brouillons articles
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
+OnFailure=alexandre-media-monitor.service
 
 [Service]
 Type=oneshot
@@ -11,8 +12,21 @@ WorkingDirectory=/opt/alexandre-media-engine/current
 EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
 Environment=HF_HOME=/var/lib/alexandre-media-engine/cache/huggingface
 Environment=XDG_CACHE_HOME=/var/lib/alexandre-media-engine/cache
+Environment=WHISPER_MODEL=base
+Environment=WHISPER_CPU_THREADS=2
+Environment=WHISPER_CHUNK_SECONDS=30
+Environment=OMP_NUM_THREADS=2
+Environment=MKL_NUM_THREADS=2
+Environment=MALLOC_ARENA_MAX=2
+Environment=YTDLP_ATTEMPTS=3
+Environment=YTDLP_ALLOW_DIRECT_FALLBACK=true
 ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs video --json
+ExecStopPost=/bin/sh -c '/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine-unit-receipt.mjs video "$SERVICE_RESULT" "$EXIT_CODE" "$EXIT_STATUS"'
 TimeoutStartSec=2h
+MemoryHigh=1800M
+MemoryMax=2400M
+OOMPolicy=stop
+Nice=10
 UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true

@@ -156,10 +156,12 @@ export function qualifyCandidate(candidate, media, {
   const offer = matchOffer(candidate, offers, media.slug);
 
   let score = 0;
-  score += official.length ? 30 : sources.some((source) => source.tier === 2) ? 18 : 8;
-  score += independentDomains.size >= 2 ? 18 : 8;
-  score += Math.min(20, matches.length * 5);
-  score += age == null ? 4 : age <= 24 ? 18 : age <= 72 ? 10 : 2;
+  // Une annonce officielle et réellement thématique constitue déjà une preuve
+  // exploitable. Les sources secondaires restent soumises à corroboration.
+  score += official.length ? 36 : sources.some((source) => source.tier === 2) ? 18 : 8;
+  score += independentDomains.size >= 2 ? 18 : official.length ? 14 : 8;
+  score += matches.length ? Math.min(20, 10 + ((matches.length - 1) * 5)) : 0;
+  score += age == null ? 10 : age <= 24 ? 18 : age <= 72 ? 10 : 2;
   score += offer ? 10 : 0;
   if (rumor) score -= 30;
   if (sensitive && !official.length) score -= 25;
@@ -193,4 +195,3 @@ export function qualifyCandidate(candidate, media, {
     qualifiedAt: now.toISOString(),
   };
 }
-

@@ -6,7 +6,7 @@ Usage:
 
   - language: ISO 639-1 code (default: fr)
   - model:    faster-whisper checkpoint name
-              (default: small  — best speed/quality balance for CPU)
+              (default: base, profil borné pour le VPS 4 Go)
               Other valid: tiny, base, small, medium, large-v3, large-v3-turbo, distil-large-v3
 
 Prints transcript text to stdout. Progress to stderr.
@@ -24,8 +24,10 @@ def main() -> int:
 
     audio_path = sys.argv[1]
     language = sys.argv[2] if len(sys.argv) > 2 else "fr"
-    model_name = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("WHISPER_MODEL", "small")
+    model_name = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("WHISPER_MODEL", "base")
     compute_type = os.environ.get("WHISPER_COMPUTE", "int8")
+    cpu_threads = max(1, int(os.environ.get("WHISPER_CPU_THREADS", "2")))
+    chunk_seconds = max(15, int(os.environ.get("WHISPER_CHUNK_SECONDS", "30")))
 
     try:
         from faster_whisper import WhisperModel
@@ -33,9 +35,19 @@ def main() -> int:
         print("error: faster-whisper not installed. Run: pip3 install --user faster-whisper", file=sys.stderr)
         return 3
 
-    print(f"[transcribe] model={model_name} compute={compute_type} lang={language}", file=sys.stderr)
+    print(
+        f"[transcribe] model={model_name} compute={compute_type} lang={language} "
+        f"threads={cpu_threads} chunk={chunk_seconds}s",
+        file=sys.stderr,
+    )
     t0 = time.time()
-    model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
+    model = WhisperModel(
+        model_name,
+        device="cpu",
+        compute_type=compute_type,
+        cpu_threads=cpu_threads,
+        num_workers=1,
+    )
     print(f"[transcribe] model loaded in {time.time() - t0:.1f}s", file=sys.stderr)
 
     t1 = time.time()
@@ -47,6 +59,7 @@ def main() -> int:
         beam_size=1,
         best_of=1,
         condition_on_previous_text=False,
+        chunk_length=chunk_seconds,
     )
 
     parts = []

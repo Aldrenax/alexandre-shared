@@ -25,11 +25,11 @@ import { auditDraftOutboundLinks, formatVideoDuration, renderMdxDraft } from '..
 import { resolveTopicId, splitMessage } from '../media/telegram.mjs';
 import { guideCandidate, selectGuideOpportunity } from '../media/guide-planner.mjs';
 import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '../media/publication-worker.mjs';
-import { MediaEngine, shouldGenerateDraftForEvent } from '../media/engine.mjs';
+import { downloadFirstAvailableAsset, MediaEngine, shouldGenerateDraftForEvent } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
-import { stickyProxyUrl, ytDlpNetworkEnv } from '../lib/whisper.mjs';
-import { resolveVideoMetadata } from '../lib/youtube.mjs';
+import { runYtDlpWithRetries, stickyProxyUrl, ytDlpNetworkEnv } from '../lib/whisper.mjs';
+import { resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
   assert.deepEqual(validateRegistry(), []);
@@ -52,6 +52,23 @@ test('transcription YouTube: le proxy protégé est transmis à yt-dlp sans vale
   assert.equal(stickyProxyUrl(sticky, 'wxyz5678'), sticky);
 });
 
+test('transcription YouTube: chaque reprise renouvelle la session proxy', async () => {
+  const attempts = [];
+  const result = await runYtDlpWithRetries(['--version'], {
+    attempts: 3,
+    env: { HTTP_PROXY_URL: 'http://user:password@geo.iproyal.com:12321' },
+    waitImpl: async () => {},
+    runImpl: async (_command, _args, options) => {
+      attempts.push(options.env.HTTPS_PROXY);
+      if (attempts.length < 3) throw new Error('504 Gateway Timeout');
+      return { stdout: 'ok', stderr: '' };
+    },
+  });
+  assert.equal(result.stdout, 'ok');
+  assert.equal(attempts.length, 3);
+  assert.equal(new Set(attempts).size, 3);
+});
+
 test('métadonnées YouTube: yt-dlp prévaut pour détecter un Short et sa miniature', () => {
   const metadata = resolveVideoMetadata(
     { duration: 120, thumbnail: [{ width: 120, height: 90 }] },
@@ -60,6 +77,58 @@ test('métadonnées YouTube: yt-dlp prévaut pour détecter un Short et sa minia
   assert.equal(metadata.duration, 37);
   assert.equal(metadata.isShort, true);
   assert.equal(metadata.thumbnails[0].url, 'https://i.ytimg.com/short.jpg');
+});
+
+test('miniature YouTube: le CDN standard prend le relais si les métadonnées sont vides', async () => {
+  const videoId = 'dzQLM3agA_o';
+  const candidates = youtubeThumbnailCandidates(videoId, []);
+  assert.match(candidates[0].url, /maxresdefault\.jpg$/);
+  assert.match(candidates[1].url, /hqdefault\.jpg$/);
+  const root = mkdtempSync(join(tmpdir(), 'youtube-thumbnail-'));
+  const destination = join(root, 'thumbnail.jpg');
+  const requested = [];
+  const selected = await downloadFirstAvailableAsset(candidates, destination, async (url) => {
+    requested.push(url);
+    if (url.endsWith('/maxresdefault.jpg')) return new Response('', { status: 404 });
+    return new Response(Buffer.alloc(12_000, 1), { status: 200 });
+  });
+  assert.match(selected.url, /hqdefault\.jpg$/);
+  assert.equal(requested.length, 2);
+});
+
+test('cycle vidéo: un Short RSS est écarté avant toute métadonnée coûteuse', async () => {
+  let infoCalls = 0;
+  const engine = new MediaEngine({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-short-'))),
+    getChannelFeedImpl: async () => [
+      { videoId: 'short-1', link: 'https://www.youtube.com/shorts/short-1', title: 'Short' },
+      { videoId: 'long-1', link: 'https://www.youtube.com/watch?v=long-1', title: 'Longue vidéo' },
+    ],
+    getVideoInfoImpl: async () => { infoCalls += 1; return {}; },
+  });
+  const result = await engine.runVideoCycle({ mediaSlug: 'investissement', dryRun: true });
+  assert.equal(result[0].planned, true);
+  assert.equal(result[0].video.videoId, 'long-1');
+  assert.equal(result[0].ignoredShorts, 1);
+  assert.equal(infoCalls, 0);
+});
+
+test('cycle vidéo: une panne est isolée et reçoit un délai de reprise', async () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-retry-')));
+  const engine = new MediaEngine({
+    store,
+    getChannelFeedImpl: async () => [
+      { videoId: 'broken-1', link: 'https://www.youtube.com/watch?v=broken-1', title: 'Vidéo indisponible' },
+    ],
+    getVideoInfoImpl: async () => { throw new Error('504 Gateway Timeout'); },
+  });
+  const result = await engine.runVideoCycle({ mediaSlug: 'investissement' });
+  assert.equal(result[0].failed, true);
+  assert.match(result[0].error, /504/);
+  const event = store.getEvent('video-draft:investissement:broken-1');
+  assert.equal(event.status, 'retryable-failure');
+  assert.ok(Date.parse(event.nextRetryAt) > Date.now());
+  assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:investissement:broken-1'), false);
 });
 
 test('collecteur page: ETag, changement et santé sans confondre échec et absence', async () => {
@@ -144,6 +213,35 @@ test('candidats: URL canonique, regroupement et source officielle obligatoire en
   }])[0], mediaBySlug('investissement'));
   assert.equal(rumor.status, 'rejected');
   assert.ok(rumor.blockers.includes('source-officielle-requise'));
+});
+
+test('candidats: une actualité officielle récente et thématique franchit le seuil qualité', () => {
+  const now = new Date('2026-08-05T12:00:00.000Z');
+  const candidate = qualifyCandidate(clusterCandidates([{
+    id: 'official-software', sourceId: 'official-software', sourceTier: 1, sourceOfficial: true,
+    title: 'Un logiciel de productivité lance une nouvelle automatisation',
+    url: 'https://official.example/actualites/automation',
+    excerpt: 'Le logiciel détaille officiellement la nouvelle fonctionnalité.',
+    publishedAt: '2026-08-05T08:00:00.000Z', media: ['logiciels'],
+  }])[0], mediaBySlug('logiciels'), { now });
+
+  assert.equal(candidate.status, 'qualified');
+  assert.ok(candidate.score >= 70);
+  assert.equal(candidate.officialSourceCount, 1);
+});
+
+test('candidats: une page officielle ancienne ne franchit pas le seuil à elle seule', () => {
+  const now = new Date('2026-08-05T12:00:00.000Z');
+  const candidate = qualifyCandidate(clusterCandidates([{
+    id: 'old-official', sourceId: 'old-official', sourceTier: 1, sourceOfficial: true,
+    title: 'Un logiciel publie une ancienne mise à jour',
+    url: 'https://official.example/archive/ancienne-version',
+    excerpt: 'Une version historique du logiciel et de son automatisation.',
+    publishedAt: '2026-07-01T08:00:00.000Z', media: ['logiciels'],
+  }])[0], mediaBySlug('logiciels'), { now });
+
+  assert.equal(candidate.status, 'rejected');
+  assert.ok(candidate.blockers.includes('score-inférieur-à-70'));
 });
 
 test('Hermes: extraction JSON et x_search dégradé sans citation', async () => {
@@ -443,6 +541,33 @@ test('supervision: un état jamais observé crée une seule alerte explicite par
   assert.equal(eventFiles.length, 1);
   engine.monitor();
   assert.equal(readdirSync(eventsDirectory).length, 1);
+});
+
+test('supervision: un échec vidéo ou un OOM systemd interdit le statut healthy', () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-monitor-video-'));
+  const store = new MediaStateStore(root);
+  store.write('source-health', {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sources: { official: { sourceId: 'official', required: true, status: 'healthy' } },
+  });
+  store.write('last-runs', {
+    version: 1,
+    runs: {
+      run: { at: new Date().toISOString(), status: 'success' },
+      video: { at: new Date().toISOString(), status: 'degraded' },
+    },
+  });
+  store.write('systemd-video', {
+    version: 1,
+    observedAt: new Date().toISOString(),
+    unit: 'video',
+    result: 'oom-kill',
+  });
+  const health = new MediaEngine({ store }).healthReport();
+  assert.equal(health.status, 'degraded');
+  assert.ok(health.blockers.includes('last-video-run-degraded'));
+  assert.ok(health.blockers.includes('video-service-oom-kill'));
 });
 
 test('préflight: ChatGPT, topics et dépôts sont requis, xAI reste un enrichissement visible', async () => {

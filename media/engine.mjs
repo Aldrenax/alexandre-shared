@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { getChannelFeed, getVideoInfo } from '../lib/youtube.mjs';
+import { getChannelFeed, getVideoInfo, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 import { activeMedia, assertValidRegistry, mediaBySlug, sourcesForMedia } from './registry.mjs';
 import { collectSources, enrichCandidateEvidence } from './source-collector.mjs';
 import { clusterCandidates, qualifyCandidate } from './candidates.mjs';
@@ -75,6 +76,19 @@ async function downloadAsset(url, destination, fetchImpl = fetch) {
   return destination;
 }
 
+export async function downloadFirstAvailableAsset(candidates, destination, fetchImpl = fetch) {
+  const errors = [];
+  for (const candidate of candidates) {
+    try {
+      await downloadAsset(candidate.url, destination, fetchImpl);
+      return candidate;
+    } catch (error) {
+      errors.push(`${candidate.url}: ${String(error?.message || error)}`);
+    }
+  }
+  throw new Error(`Aucun asset YouTube exploitable\n${errors.join('\n')}`);
+}
+
 function offerForUrl(offers, mediaSlug, rawUrl) {
   if (!rawUrl) return null;
   let hostname;
@@ -88,7 +102,14 @@ function offerForUrl(offers, mediaSlug, rawUrl) {
 export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REVISION) {
   const event = store.getEvent(key);
   if (!event) return true;
+  if (event.status === 'retryable-failure') {
+    return !event.nextRetryAt || Number.isNaN(Date.parse(event.nextRetryAt)) || Date.parse(event.nextRetryAt) <= Date.now();
+  }
   return event.status === 'qa-failed' && event.editorialRevision !== revision;
+}
+
+function retryAt(hours) {
+  return new Date(Date.now() + hours * 3_600_000).toISOString();
 }
 
 export class MediaEngine {
@@ -98,12 +119,16 @@ export class MediaEngine {
     fetchImpl = fetch,
     offers = [],
     internalLinks = {},
+    getChannelFeedImpl = getChannelFeed,
+    getVideoInfoImpl = getVideoInfo,
   } = {}) {
     this.store = store;
     this.hermes = hermes;
     this.fetchImpl = fetchImpl;
     this.offers = offers;
     this.internalLinks = internalLinks;
+    this.getChannelFeed = getChannelFeedImpl;
+    this.getVideoInfo = getVideoInfoImpl;
   }
 
   validate() {
@@ -336,32 +361,48 @@ export class MediaEngine {
   async runVideoCycle({ mediaSlug = null, dryRun = false } = {}) {
     const results = [];
     for (const media of this.selectedMedia(mediaSlug)) {
-      const feed = await getChannelFeed(media.channelId);
-      const unseen = feed.find((entry) => shouldGenerateDraftForEvent(this.store, `video-draft:${media.slug}:${entry.videoId}`));
-      if (!unseen) {
-        results.push({ mediaSlug: media.slug, skipped: true, reason: 'no-unseen-video' });
-        continue;
-      }
-      if (dryRun) {
-        results.push({ mediaSlug: media.slug, planned: true, video: unseen });
-        continue;
-      }
-      const info = await getVideoInfo(unseen.videoId);
-      if (info.isShort || info.isLive) {
-        this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, { status: 'ignored-short-or-live' });
-        results.push({ mediaSlug: media.slug, skipped: true, reason: 'short-or-live', videoId: unseen.videoId });
-        continue;
-      }
-      if (!info.transcriptText || info.transcriptText.length < 500) {
-        results.push({ mediaSlug: media.slug, skipped: true, reason: 'transcript-unavailable', videoId: unseen.videoId });
-        continue;
-      }
-      const thumbnail = [...(info.thumbnails || [])].sort((a, b) => Number(b.width || 0) - Number(a.width || 0))[0];
-      if (!thumbnail?.url) throw new Error(`Miniature YouTube absente pour ${unseen.videoId}`);
-      const thumbnailPath = join(this.store.assetsDir, media.slug, `${unseen.videoId}-youtube.jpg`);
-      await downloadAsset(thumbnail.url, thumbnailPath, this.fetchImpl);
-      const matchedOffer = offerForUrl(this.offers, media.slug, info.affiliateUrl);
-      const candidate = {
+      let unseen = null;
+      try {
+        const feed = await this.getChannelFeed(media.channelId);
+        const pending = feed.filter((entry) => shouldGenerateDraftForEvent(this.store, `video-draft:${media.slug}:${entry.videoId}`));
+        const shortsFromFeed = pending.filter((entry) => String(entry.link || '').includes('/shorts/'));
+        if (!dryRun) {
+          for (const short of shortsFromFeed) {
+            this.store.markEvent(`video-draft:${media.slug}:${short.videoId}`, { status: 'ignored-short-or-live', source: 'youtube-rss' });
+          }
+        }
+        unseen = pending.find((entry) => !String(entry.link || '').includes('/shorts/')) || null;
+        if (!unseen) {
+          results.push({ mediaSlug: media.slug, skipped: true, reason: 'no-unseen-long-video', ignoredShorts: shortsFromFeed.length });
+          continue;
+        }
+        if (dryRun) {
+          results.push({ mediaSlug: media.slug, planned: true, video: unseen, ignoredShorts: shortsFromFeed.length });
+          continue;
+        }
+        const info = await this.getVideoInfo(unseen.videoId);
+        if (info.isShort || info.isLive) {
+          this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, { status: 'ignored-short-or-live' });
+          results.push({ mediaSlug: media.slug, skipped: true, reason: 'short-or-live', videoId: unseen.videoId });
+          continue;
+        }
+        if (!info.transcriptText || info.transcriptText.length < 500) {
+          this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
+            status: 'retryable-failure',
+            reason: 'transcript-unavailable',
+            nextRetryAt: retryAt(6),
+          });
+          results.push({ mediaSlug: media.slug, failed: true, reason: 'transcript-unavailable', videoId: unseen.videoId });
+          continue;
+        }
+        const thumbnailPath = join(this.store.assetsDir, media.slug, `${unseen.videoId}-youtube.jpg`);
+        const thumbnail = await downloadFirstAvailableAsset(
+          youtubeThumbnailCandidates(unseen.videoId, info.thumbnails),
+          thumbnailPath,
+          this.fetchImpl,
+        );
+        const matchedOffer = offerForUrl(this.offers, media.slug, info.affiliateUrl);
+        const candidate = {
         id: `youtube-${unseen.videoId}`,
         title: info.title || unseen.title,
         primaryUrl: `https://www.youtube.com/watch?v=${unseen.videoId}`,
@@ -393,8 +434,8 @@ export class MediaEngine {
           publishedAt: info.publishedAt?.toISOString?.() || null,
           kind: 'youtube-video',
         }],
-      };
-      const video = {
+        };
+        const video = {
         videoId: unseen.videoId,
         title: info.title || unseen.title,
         publishedAt: candidate.publishedAt,
@@ -409,14 +450,25 @@ export class MediaEngine {
         thumbnailAlt: `Miniature de la vidéo ${info.title || unseen.title}`,
         thumbnailWidth: thumbnail.width,
         thumbnailHeight: thumbnail.height,
-      };
-      const draft = await this.generateDraft(candidate, { contentType: 'video', video, generateBanner: false });
-      this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
-        status: draft.qa?.passed ? 'qa-passed' : 'qa-failed',
-        editorialRevision: EDITORIAL_REVISION,
-        candidateId: candidate.id,
-      });
-      results.push({ mediaSlug: media.slug, videoId: unseen.videoId, draft });
+        };
+        const draft = await this.generateDraft(candidate, { contentType: 'video', video, generateBanner: false });
+        this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
+          status: draft.qa?.passed ? 'qa-passed' : draft.status === 'blocked' ? 'editorial-blocked' : 'qa-failed',
+          editorialRevision: EDITORIAL_REVISION,
+          candidateId: candidate.id,
+        });
+        results.push({ mediaSlug: media.slug, videoId: unseen.videoId, draft });
+      } catch (error) {
+        const message = String(error?.message || error);
+        if (!dryRun && unseen?.videoId) {
+          this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
+            status: 'retryable-failure',
+            reason: message,
+            nextRetryAt: retryAt(2),
+          });
+        }
+        results.push({ mediaSlug: media.slug, videoId: unseen?.videoId || null, failed: true, error: message });
+      }
     }
     return results;
   }
@@ -467,8 +519,13 @@ export class MediaEngine {
       ? (Date.now() - Date.parse(sourceState.updatedAt)) / 3_600_000
       : null;
     const networkRun = lastRuns.runs?.run || null;
+    const videoRun = lastRuns.runs?.video || null;
+    const videoUnit = this.store.read('systemd-video', null);
     const networkAgeHours = networkRun?.at && !Number.isNaN(Date.parse(networkRun.at))
       ? (Date.now() - Date.parse(networkRun.at)) / 3_600_000
+      : null;
+    const videoAgeHours = videoRun?.at && !Number.isNaN(Date.parse(videoRun.at))
+      ? (Date.now() - Date.parse(videoRun.at)) / 3_600_000
       : null;
     let status = 'healthy';
     const blockers = [];
@@ -479,6 +536,10 @@ export class MediaEngine {
     if (sourceAgeHours != null && sourceAgeHours > 3) blockers.push('source-health-stale');
     if (networkRun?.status === 'failed') blockers.push('last-network-run-failed');
     if (networkAgeHours != null && networkAgeHours > 3) blockers.push('network-run-stale');
+    if (videoRun?.status === 'failed') blockers.push('last-video-run-failed');
+    if (videoRun?.status === 'degraded') blockers.push('last-video-run-degraded');
+    if (videoAgeHours != null && videoAgeHours > 3) blockers.push('video-run-stale');
+    if (videoUnit && videoUnit.result !== 'success') blockers.push(`video-service-${videoUnit.result || 'failed'}`);
     if (xValues.length && xValues.every((result) => result.degraded)) warnings.push('x-search-unavailable');
     if (blockers.length) status = blockers.some((value) => /failed|below/.test(value)) ? 'critical' : 'degraded';
     else if (warnings.length) status = 'degraded';
@@ -504,6 +565,7 @@ export class MediaEngine {
       freshness: {
         sourceHealthAgeHours: sourceAgeHours,
         networkRunAgeHours: networkAgeHours,
+        videoRunAgeHours: videoAgeHours,
       },
       lastRuns: lastRuns.runs || {},
     };
@@ -514,7 +576,11 @@ export class MediaEngine {
     if (dryRun || health.status === 'healthy') return { health, event: null };
     this.store.initialize();
     const day = new Date().toISOString().slice(0, 10);
-    const eventId = `engine-${health.status}-${day}`;
+    const fingerprint = createHash('sha256')
+      .update([...health.blockers, ...(health.warnings || [])].sort().join('\n'))
+      .digest('hex')
+      .slice(0, 10);
+    const eventId = `engine-${health.status}-${day}-${fingerprint}`;
     const event = {
       version: 1,
       eventId,
