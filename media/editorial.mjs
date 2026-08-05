@@ -13,7 +13,18 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 3;
+export const EDITORIAL_REVISION = 4;
+
+function normalizedSlug(value, fallback = '') {
+  return String(value || fallback)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 160)
+    .replace(/-+$/g, '');
+}
 
 function sourcePacket(candidate) {
   return (candidate.sources || []).map((source, index) => ({
@@ -195,7 +206,7 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
     mediaSlug: media.slug,
     candidateId: candidate.id,
     title: String(payload?.title || '').trim(),
-    slug: String(payload?.slug || '').trim(),
+    slug: normalizedSlug(payload?.slug, payload?.title || candidate.title),
     description: String(payload?.description || '').trim().slice(0, 180),
     body,
     wordCount,

@@ -393,6 +393,7 @@ test('rédaction vidéo: la source YouTube et l’offre exacte sont injectées s
   assert.match(draft.body, /\[Découvrir Deblock via mon lien affilié\]\(https:\/\/cyberindependant\.com\/deblock\)/);
   assert.deepEqual(draft.sourceUrls, ['https://www.youtube.com/watch?v=dzQLM3agA_o']);
   assert.equal(draft.offer.id, 'deblock');
+  assert.equal(normalizeDraft({ ...draft, slug: 'deblock-dzqlm3aga_o' }, { contentType: 'video', candidate, media }).slug, 'deblock-dzqlm3aga-o');
 });
 
 test('rédaction: le prompt reprend les mentions exigées par la QA réglementaire', () => {
