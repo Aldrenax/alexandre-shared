@@ -314,6 +314,29 @@ test('Hermes: extraction JSON et x_search dégradé sans citation', async () => 
   assert.ok(calls[0].args.includes('gpt-5.6-terra'));
 });
 
+test('Hermes: les URL directes des posts x_search deviennent des preuves traçables', async () => {
+  const client = new HermesClient({
+    command: ['hermes'],
+    env: {},
+    executeImpl: async () => ({
+      stdout: JSON.stringify({
+        answer: 'Annonce officielle',
+        citations: [],
+        posts: [{ url: 'https://x.com/OpenAI/status/123', author: 'OpenAI', summary: 'Annonce produit', official: true }],
+        degraded: true,
+        degradedReason: 'citations structurées absentes',
+      }),
+      stderr: '',
+      code: 0,
+    }),
+  });
+  const result = await client.xSearch({ query: 'annonce OpenAI', mediaSlug: 'logiciels' });
+  assert.equal(result.degraded, false);
+  assert.equal(result.posts.length, 1);
+  assert.deepEqual(result.citations, [{ url: 'https://x.com/OpenAI/status/123', title: 'Annonce produit' }]);
+  assert.equal(result.degradedReason, null);
+});
+
 test('Hermes: exécute le CLI avec l’utilisateur du volume OAuth quand il est configuré', () => {
   assert.deepEqual(defaultHermesCommand({
     HERMES_DOCKER_USER: '10000:10000',

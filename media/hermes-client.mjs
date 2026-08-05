@@ -176,7 +176,8 @@ export class HermesClient {
       `Utilise impérativement l'outil x_search une seule fois avec la requête et les filtres exacts suivants.`,
       `Requête: ${query}`,
       `Filtres JSON: ${JSON.stringify(filters)}`,
-      `N'utilise pas ta mémoire comme source. Si x_search ne fournit aucune citation, marque degraded=true.`,
+      `N'utilise pas ta mémoire comme source. Un post avec une URL X directe constitue une preuve traçable.`,
+      `Marque degraded=true uniquement si ni citations ni posts ne contiennent d'URL exploitable.`,
       `Schéma: {"query":"...","answer":"...","citations":[{"url":"...","title":"..."}],"posts":[{"url":"...","author":"...","publishedAt":null,"summary":"...","official":false}],"degraded":false,"degradedReason":null}`,
     ].join('\n'), {
       provider: this.env.HERMES_EDITORIAL_PROVIDER || DEFAULT_EDITORIAL_PROVIDER,
@@ -185,11 +186,21 @@ export class HermesClient {
       toolsets: ['x_search'],
       timeoutMs: 240_000,
     });
-    const citations = Array.isArray(payload.citations) ? payload.citations.filter((citation) => /^https?:\/\//.test(citation?.url || '')) : [];
-    const degraded = Boolean(payload.degraded) || citations.length === 0;
+    const posts = Array.isArray(payload.posts)
+      ? payload.posts.filter((post) => /^https?:\/\//.test(post?.url || ''))
+      : [];
+    const explicitCitations = Array.isArray(payload.citations)
+      ? payload.citations.filter((citation) => /^https?:\/\//.test(citation?.url || ''))
+      : [];
+    const citations = explicitCitations.length ? explicitCitations : posts.map((post) => ({
+      url: post.url,
+      title: post.summary || post.author || post.url,
+    }));
+    const degraded = citations.length === 0;
     return {
       ...payload,
       query,
+      posts,
       citations,
       degraded,
       degradedReason: degraded ? payload.degradedReason || 'x_search sans citation exploitable' : null,
