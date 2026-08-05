@@ -13,6 +13,8 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
+export const EDITORIAL_REVISION = 2;
+
 function sourcePacket(candidate) {
   return (candidate.sources || []).map((source, index) => ({
     ref: `S${index + 1}`,

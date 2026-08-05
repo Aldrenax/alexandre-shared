@@ -65,7 +65,11 @@ export class MediaStateStore {
   }
 
   hasEvent(key) {
-    return Boolean(this.read('events', { version: 1, events: {} }).events?.[key]);
+    return Boolean(this.getEvent(key));
+  }
+
+  getEvent(key) {
+    return this.read('events', { version: 1, events: {} }).events?.[key] || null;
   }
 
   markEvent(key, receipt = {}) {

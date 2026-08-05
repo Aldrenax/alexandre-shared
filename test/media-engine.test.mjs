@@ -25,7 +25,7 @@ import { auditDraftOutboundLinks, formatVideoDuration, renderMdxDraft } from '..
 import { resolveTopicId, splitMessage } from '../media/telegram.mjs';
 import { guideCandidate, selectGuideOpportunity } from '../media/guide-planner.mjs';
 import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '../media/publication-worker.mjs';
-import { MediaEngine } from '../media/engine.mjs';
+import { MediaEngine, shouldGenerateDraftForEvent } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
 import { stickyProxyUrl, ytDlpNetworkEnv } from '../lib/whisper.mjs';
@@ -178,6 +178,20 @@ test('état: idempotence et lease empêchent un double cycle', () => {
   assert.equal(store.acquireLease('cycle'), null);
   store.releaseLease(lease);
   assert.ok(store.acquireLease('cycle'));
+});
+
+test('état éditorial: un échec QA est retenté une fois après révision du prompt', () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-retry-state-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const key = 'video-draft:investissement:video-1';
+  assert.equal(shouldGenerateDraftForEvent(store, key, 2), true);
+  store.markEvent(key, { status: 'qa-failed', editorialRevision: 1 });
+  assert.equal(shouldGenerateDraftForEvent(store, key, 2), true);
+  store.markEvent(key, { status: 'qa-failed', editorialRevision: 2 });
+  assert.equal(shouldGenerateDraftForEvent(store, key, 2), false);
+  store.markEvent(key, { status: 'qa-passed', editorialRevision: 1 });
+  assert.equal(shouldGenerateDraftForEvent(store, key, 2), false);
 });
 
 test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {

@@ -4,7 +4,12 @@ import { getChannelFeed, getVideoInfo } from '../lib/youtube.mjs';
 import { activeMedia, assertValidRegistry, mediaBySlug, sourcesForMedia } from './registry.mjs';
 import { collectSources, enrichCandidateEvidence } from './source-collector.mjs';
 import { clusterCandidates, qualifyCandidate } from './candidates.mjs';
-import { buildBannerPrompt, buildEditorialPrompt, normalizeDraft } from './editorial.mjs';
+import {
+  buildBannerPrompt,
+  buildEditorialPrompt,
+  EDITORIAL_REVISION,
+  normalizeDraft,
+} from './editorial.mjs';
 import { qaDraft } from './qa.mjs';
 import { guideCandidate, selectGuideOpportunity } from './guide-planner.mjs';
 import { HermesClient } from './hermes-client.mjs';
@@ -78,6 +83,12 @@ function offerForUrl(offers, mediaSlug, rawUrl) {
     if (offer.status !== 'active' || !offer.channels?.includes(mediaSlug)) return false;
     try { return new URL(offer.url).hostname.replace(/^www\./, '') === hostname; } catch { return false; }
   }) || null;
+}
+
+export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REVISION) {
+  const event = store.getEvent(key);
+  if (!event) return true;
+  return event.status === 'qa-failed' && event.editorialRevision !== revision;
 }
 
 export class MediaEngine {
@@ -300,6 +311,7 @@ export class MediaEngine {
     const draftPath = this.store.saveDraft(media.slug, draft);
     const editorialEvent = {
       version: 1,
+      editorialRevision: EDITORIAL_REVISION,
       type: qa.passed ? 'editorial.draft.qa-passed' : 'editorial.draft.qa-failed',
       createdAt: new Date().toISOString(),
       mediaSlug: media.slug,
@@ -314,6 +326,7 @@ export class MediaEngine {
     this.store.enqueue('events', `${media.slug}-${candidate.id}-${contentType}`, editorialEvent);
     this.store.markEvent(`draft:${media.slug}:${candidate.id}:${contentType}`, {
       status: qa.passed ? 'qa-passed' : 'qa-failed',
+      editorialRevision: EDITORIAL_REVISION,
       slug: draft.slug,
       draftPath,
     });
@@ -324,7 +337,7 @@ export class MediaEngine {
     const results = [];
     for (const media of this.selectedMedia(mediaSlug)) {
       const feed = await getChannelFeed(media.channelId);
-      const unseen = feed.find((entry) => !this.store.hasEvent(`video-draft:${media.slug}:${entry.videoId}`));
+      const unseen = feed.find((entry) => shouldGenerateDraftForEvent(this.store, `video-draft:${media.slug}:${entry.videoId}`));
       if (!unseen) {
         results.push({ mediaSlug: media.slug, skipped: true, reason: 'no-unseen-video' });
         continue;
@@ -400,6 +413,7 @@ export class MediaEngine {
       const draft = await this.generateDraft(candidate, { contentType: 'video', video, generateBanner: false });
       this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
         status: draft.qa?.passed ? 'qa-passed' : 'qa-failed',
+        editorialRevision: EDITORIAL_REVISION,
         candidateId: candidate.id,
       });
       results.push({ mediaSlug: media.slug, videoId: unseen.videoId, draft });
@@ -425,7 +439,7 @@ export class MediaEngine {
         continue;
       }
       const eventKey = `guide-draft:${media.slug}:${opportunity.id}`;
-      if (this.store.hasEvent(eventKey)) {
+      if (!shouldGenerateDraftForEvent(this.store, eventKey)) {
         results.push({ mediaSlug: media.slug, skipped: true, reason: 'already-drafted', opportunityId: opportunity.id });
         continue;
       }
@@ -433,6 +447,7 @@ export class MediaEngine {
       const draft = await this.generateDraft(enrichedCandidate, { contentType: 'guide' });
       this.store.markEvent(eventKey, {
         status: draft.qa?.passed ? 'qa-passed' : 'qa-failed',
+        editorialRevision: EDITORIAL_REVISION,
         candidateId: candidate.id,
       });
       results.push({ mediaSlug: media.slug, opportunityId: opportunity.id, draft });
@@ -551,7 +566,7 @@ export class MediaEngine {
           const candidate = candidates.find((entry) => entry.mediaSlug === media.slug && entry.status === 'qualified');
           if (!candidate) continue;
           const eventKey = `draft:${media.slug}:${candidate.id}:news`;
-          if (this.store.hasEvent(eventKey)) continue;
+          if (!shouldGenerateDraftForEvent(this.store, eventKey)) continue;
           const enrichedCandidate = await enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl });
           if (!enrichedCandidate.evidenceAvailableCount) continue;
           drafts.push(await this.generateDraft(enrichedCandidate, { contentType: 'news' }));
