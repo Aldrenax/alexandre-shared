@@ -1,0 +1,23 @@
+[Unit]
+Description=Hermes Media Engine - publication contrôlée des articles validés
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/alexandre-media-engine/current
+EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
+EnvironmentFile=-/etc/alexandre-media-engine/shadow.env
+EnvironmentFile=-/etc/alexandre-media-engine/publication.env
+ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs publish --limit 1 --json
+TimeoutStartSec=45min
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/opt/alexandre-media-engine/current /var/lib/hermes-agent/business-data /var/lib/hermes-agent/media-engine /etc/alexandre-media-engine
+ReadWritePaths=/var/lib/alexandre-media-engine /var/tmp

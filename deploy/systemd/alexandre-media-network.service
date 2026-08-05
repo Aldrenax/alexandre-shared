@@ -1,0 +1,27 @@
+[Unit]
+Description=Hermes Media Engine - collecte et brouillons actualités
+After=network-online.target docker.service hermes-telegram-cockpit.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/alexandre-media-engine/current
+EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
+ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs run --json
+TimeoutStartSec=45min
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadOnlyPaths=/opt/alexandre-media-engine/current /var/lib/hermes-agent/telegram-cockpit /var/lib/hermes-agent/business-data
+ReadWritePaths=/var/lib/alexandre-media-engine /var/lib/hermes-agent/media-engine

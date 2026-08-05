@@ -1,24 +1,47 @@
 {
   "name": "alexandre-shared",
-  "version": "0.2.0",
-  "description": "Code partagé entre les sites du réseau Alexandre Chaimbault (Investissement, Tesla, Entreprise, Affiliation, Logiciels). STYLE_GUIDE éditorial, builders Schema.org, helpers UTM, pipeline YouTube + Whisper.",
+  "version": "0.3.0",
+  "description": "Code partagé entre les sites du réseau Alexandre Chaimbault. SEO, YouTube et moteur éditorial Hermes Media Engine.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "media:validate": "node bin/media-engine.mjs validate",
+    "media:dry-run": "node bin/media-engine.mjs run --dry-run"
+  },
+  "bin": {
+    "alexandre-media-engine": "./bin/media-engine.mjs"
+  },
   "type": "module",
   "exports": {
     "./style-guide": "./STYLE_GUIDE_BASE.md",
     "./lib/seo.mjs": "./lib/seo.mjs",
     "./lib/utm.mjs": "./lib/utm.mjs",
     "./lib/youtube.mjs": "./lib/youtube.mjs",
-    "./lib/whisper.mjs": "./lib/whisper.mjs"
+    "./lib/whisper.mjs": "./lib/whisper.mjs",
+    "./media/registry.mjs": "./media/registry.mjs",
+    "./media/source-collector.mjs": "./media/source-collector.mjs",
+    "./media/candidates.mjs": "./media/candidates.mjs",
+    "./media/hermes-client.mjs": "./media/hermes-client.mjs",
+    "./media/editorial.mjs": "./media/editorial.mjs",
+    "./media/guide-planner.mjs": "./media/guide-planner.mjs",
+    "./media/qa.mjs": "./media/qa.mjs",
+    "./media/state-store.mjs": "./media/state-store.mjs",
+    "./media/telegram.mjs": "./media/telegram.mjs",
+    "./media/site-publisher.mjs": "./media/site-publisher.mjs",
+    "./media/publication-worker.mjs": "./media/publication-worker.mjs",
+    "./media/preflight.mjs": "./media/preflight.mjs",
+    "./media/engine.mjs": "./media/engine.mjs"
   },
-  "peerDependencies": {
+  "dependencies": {
     "rss-parser": "^3.13.0",
+    "sharp": "^0.35.3",
     "youtubei.js": "^17.0.0"
   },
-  "peerDependenciesMeta": {
-    "rss-parser": { "optional": true },
-    "youtubei.js": { "optional": true }
-  },
   "files": [
+    "bin/",
+    "config/",
+    "deploy/",
+    "docs/",
+    "media/",
     "STYLE_GUIDE_BASE.md",
     "lib/"
   ],

@@ -1,0 +1,31 @@
+{
+  "chaimbault": {
+    "repository": "git@github.com:Aldrenax/alexandre-chaimbault.git",
+    "branch": "main",
+    "routeByContentType": {
+      "news": "actualites",
+      "video": "videos",
+      "guide": "guides"
+    }
+  },
+  "tesla-tech": {
+    "repository": "https://github.com/Aldrenax/alexandre-tesla-tech.git",
+    "branch": "main"
+  },
+  "affiliation": {
+    "repository": "https://github.com/Aldrenax/alexandre-affiliation.git",
+    "branch": "main"
+  },
+  "logiciels": {
+    "repository": "https://github.com/Aldrenax/alexandre-logiciels.git",
+    "branch": "main"
+  },
+  "investissement": {
+    "repository": "https://github.com/Aldrenax/alexandre-investissement.git",
+    "branch": "main"
+  },
+  "entreprise": {
+    "repository": "https://github.com/Aldrenax/alexandre-entreprise.git",
+    "branch": "main"
+  }
+}

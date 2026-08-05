@@ -1,0 +1,12 @@
+[Unit]
+Description=Hermes Media Engine - vérification vidéo
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=2min
+Persistent=true
+Unit=alexandre-media-video.service
+
+[Install]
+WantedBy=timers.target
+

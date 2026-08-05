@@ -1,0 +1,11 @@
+[Unit]
+Description=Hermes Media Engine - surveillance toutes les 20 minutes
+
+[Timer]
+OnCalendar=*:0/20
+RandomizedDelaySec=60s
+Persistent=true
+Unit=alexandre-media-monitor.service
+
+[Install]
+WantedBy=timers.target

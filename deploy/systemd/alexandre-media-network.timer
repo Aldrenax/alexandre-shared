@@ -1,0 +1,12 @@
+[Unit]
+Description=Hermes Media Engine - cycle horaire
+
+[Timer]
+OnCalendar=*-*-* *:17:00 Europe/Paris
+RandomizedDelaySec=8min
+Persistent=true
+Unit=alexandre-media-network.service
+
+[Install]
+WantedBy=timers.target
+

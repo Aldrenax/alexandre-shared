@@ -1,0 +1,12 @@
+[Unit]
+Description=Hermes Media Engine - préparation hebdomadaire des guides
+
+[Timer]
+OnCalendar=Tue *-*-* 05:20:00 Europe/Paris
+RandomizedDelaySec=10min
+Persistent=true
+Unit=alexandre-media-guide.service
+
+[Install]
+WantedBy=timers.target
+

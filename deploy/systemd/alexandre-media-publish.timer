@@ -1,0 +1,11 @@
+[Unit]
+Description=Hermes Media Engine - vérification des brouillons publiables
+
+[Timer]
+OnCalendar=*-*-* 07..20:0/10 Europe/Paris
+RandomizedDelaySec=90s
+Persistent=true
+Unit=alexandre-media-publish.service
+
+[Install]
+WantedBy=timers.target
