@@ -26,6 +26,9 @@ mv -Tf "$RELEASE_ROOT/current.next" "$RELEASE_ROOT/current"
 if [[ ! -e "$CONFIG_DIR/media-engine.env" ]]; then
   install -m 0640 "$SOURCE_DIR/deploy/media-engine.env.example" "$CONFIG_DIR/media-engine.env"
 fi
+if ! grep -q '^HERMES_DOCKER_USER=' "$CONFIG_DIR/media-engine.env"; then
+  printf '\nHERMES_DOCKER_USER=10000:10000\n' >> "$CONFIG_DIR/media-engine.env"
+fi
 if [[ ! -e "$CONFIG_DIR/sites.json" ]]; then
   install -m 0640 "$SOURCE_DIR/deploy/sites.example.json" "$CONFIG_DIR/sites.json"
 fi
