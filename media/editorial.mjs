@@ -13,7 +13,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 8;
+export const EDITORIAL_REVISION = 9;
 
 function normalizedSlug(value, fallback = '') {
   return String(value || fallback)
