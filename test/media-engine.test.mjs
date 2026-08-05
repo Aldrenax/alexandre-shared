@@ -28,6 +28,7 @@ import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '..
 import { MediaEngine } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
+import { ytDlpNetworkArgs } from '../lib/whisper.mjs';
 
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
   assert.deepEqual(validateRegistry(), []);
@@ -38,6 +39,14 @@ test('registre: huit chaînes, six médias éditoriaux et sources officielles', 
   }
   assert.equal(mediaBySlug('daily').editorialEnabled, false);
   assert.equal(mediaBySlug('askoptimize').editorialEnabled, false);
+});
+
+test('transcription YouTube: le proxy protégé est transmis à yt-dlp sans valeur par défaut', () => {
+  assert.deepEqual(ytDlpNetworkArgs({}), []);
+  assert.deepEqual(ytDlpNetworkArgs({ HTTP_PROXY_URL: '  http://proxy.example:8080  ' }), [
+    '--proxy',
+    'http://proxy.example:8080',
+  ]);
 });
 
 test('collecteur page: ETag, changement et santé sans confondre échec et absence', async () => {
