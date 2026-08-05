@@ -230,6 +230,30 @@ test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
   }).allowed, true);
 });
 
+test('rédaction: le prompt reprend les mentions exigées par la QA réglementaire', () => {
+  const candidate = {
+    id: 'candidate-finance-1',
+    title: 'Comprendre un investissement',
+    score: 90,
+    keywordMatches: ['investissement'],
+    sources: [],
+  };
+  const financePrompt = buildEditorialPrompt({
+    media: mediaBySlug('investissement'),
+    candidate,
+    contentType: 'guide',
+  });
+  assert.match(financePrompt, /Ce contenu ne constitue pas un conseil en investissement\./);
+  assert.match(financePrompt, /Tout investissement comporte un risque de perte en capital, partielle ou totale\./);
+
+  const legalPrompt = buildEditorialPrompt({
+    media: mediaBySlug('entreprise'),
+    candidate,
+    contentType: 'guide',
+  });
+  assert.match(legalPrompt, /Ce contenu ne constitue pas un conseil juridique ou fiscal personnalisé\./);
+});
+
 test('publication: MDX reste brouillon et respecte la collection', () => {
   const media = mediaBySlug('logiciels');
   const mdx = renderMdxDraft({

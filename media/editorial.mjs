@@ -53,6 +53,21 @@ function outputSchema(type) {
   };
 }
 
+function complianceInstructions(media) {
+  if (media.risk === 'regulated-finance') return [
+    'CONFORMITÉ FINANCIÈRE OBLIGATOIRE:',
+    '- Ajoute une section d’avertissement clairement visible dans le body.',
+    '- Inclus exactement cette phrase: "Ce contenu ne constitue pas un conseil en investissement."',
+    '- Inclus exactement cette phrase: "Tout investissement comporte un risque de perte en capital, partielle ou totale."',
+  ];
+  if (media.risk === 'legal-tax') return [
+    'CONFORMITÉ JURIDIQUE ET FISCALE OBLIGATOIRE:',
+    '- Ajoute une section d’avertissement clairement visible dans le body.',
+    '- Inclus exactement cette phrase: "Ce contenu ne constitue pas un conseil juridique ou fiscal personnalisé."',
+  ];
+  return [];
+}
+
 function commonInstructions({ media, candidate, type, internalLinks, offer }) {
   const requirement = CONTENT_REQUIREMENTS[type];
   const sources = sourcePacket(candidate);
@@ -72,6 +87,8 @@ function commonInstructions({ media, candidate, type, internalLinks, offer }) {
     '',
     'RÈGLES ÉDITORIALES:',
     STYLE_GUIDE,
+    '',
+    ...complianceInstructions(media),
     '',
     `MÉDIA JSON: ${JSON.stringify({
       slug: media.slug,
