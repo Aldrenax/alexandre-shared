@@ -101,6 +101,9 @@ function commonInstructions({ media, candidate, type, internalLinks, offer }) {
     'RÈGLES ÉDITORIALES:',
     STYLE_GUIDE,
     '',
+    'BRIEF ÉDITORIAL SPÉCIFIQUE AU SITE:',
+    media.editorialBrief || 'Aucun brief spécifique disponible.',
+    '',
     ...complianceInstructions(media),
     '',
     `MÉDIA JSON: ${JSON.stringify({

@@ -6,6 +6,8 @@
  * VPS and is joined by stable media/source identifiers.
  */
 
+import { EDITORIAL_BRIEFS } from './editorial-briefs.mjs';
+
 const dailyCadence = Object.freeze({
   newsTargetPerWeek: 7,
   videoArticle: 'on-public-long-video',
@@ -21,6 +23,7 @@ export const MEDIA_NETWORK = Object.freeze([
     siteUrl: 'https://alexandrechaimbault.com',
     topicName: '🎥 Alexandre Chaimbault',
     editorialEnabled: true,
+    editorialBrief: EDITORIAL_BRIEFS.chaimbault,
     risk: 'standard',
     cadence: dailyCadence,
     sections: ['actualites', 'videos', 'guides'],
@@ -45,6 +48,7 @@ export const MEDIA_NETWORK = Object.freeze([
     siteUrl: 'https://alexandre-tesla.fr',
     topicName: '🚗 Tesla & Tech',
     editorialEnabled: true,
+    editorialBrief: EDITORIAL_BRIEFS['tesla-tech'],
     risk: 'product-safety',
     cadence: dailyCadence,
     sections: ['actualites', 'videos', 'guides'],
@@ -69,6 +73,7 @@ export const MEDIA_NETWORK = Object.freeze([
     siteUrl: 'https://alexandre-affiliation.fr',
     topicName: '🔗 Affiliation & Référencement',
     editorialEnabled: true,
+    editorialBrief: EDITORIAL_BRIEFS.affiliation,
     risk: 'commercial',
     cadence: dailyCadence,
     sections: ['actualites', 'videos', 'guides'],
@@ -93,6 +98,7 @@ export const MEDIA_NETWORK = Object.freeze([
     siteUrl: 'https://alexandre-logiciels.fr',
     topicName: '🧰 Logiciels & Marketing',
     editorialEnabled: true,
+    editorialBrief: EDITORIAL_BRIEFS.logiciels,
     risk: 'standard',
     cadence: dailyCadence,
     sections: ['actualites', 'videos', 'guides'],
@@ -117,6 +123,7 @@ export const MEDIA_NETWORK = Object.freeze([
     siteUrl: 'https://alexandre-investissement.fr',
     topicName: '📈 Finance & Investissement',
     editorialEnabled: true,
+    editorialBrief: EDITORIAL_BRIEFS.investissement,
     risk: 'regulated-finance',
     cadence: dailyCadence,
     sections: ['actualites', 'videos', 'guides'],
@@ -141,6 +148,7 @@ export const MEDIA_NETWORK = Object.freeze([
     siteUrl: 'https://alexandre-entreprise.fr',
     topicName: '🏢 Entreprise & Comptabilité',
     editorialEnabled: true,
+    editorialBrief: EDITORIAL_BRIEFS.entreprise,
     risk: 'legal-tax',
     cadence: dailyCadence,
     sections: ['actualites', 'videos', 'guides'],

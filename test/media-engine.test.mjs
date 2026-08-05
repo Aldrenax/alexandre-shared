@@ -39,6 +39,7 @@ test('registre: huit chaînes, six médias éditoriaux et sources officielles', 
   assert.equal(activeMedia().length, 6);
   for (const media of activeMedia()) {
     assert.ok(MEDIA_SOURCES.some((source) => source.media.includes(media.slug) && source.official));
+    assert.ok(media.editorialBrief.length > 200);
   }
   assert.equal(mediaBySlug('daily').editorialEnabled, false);
   assert.equal(mediaBySlug('askoptimize').editorialEnabled, false);
@@ -343,6 +344,8 @@ test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
   const prompt = buildEditorialPrompt({ media, candidate, contentType: 'news' });
   assert.match(prompt, /SOURCES JSON/);
   assert.match(prompt, /uniquement les faits/);
+  assert.match(prompt, /BRIEF ÉDITORIAL SPÉCIFIQUE AU SITE/);
+  assert.match(prompt, /Free, Pro et Business/);
 
   const words = Array.from({ length: 1_220 }, (_, index) => `mot${index}`).join(' ');
   const payload = {

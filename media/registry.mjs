@@ -31,6 +31,7 @@ export function validateRegistry({ media = MEDIA_NETWORK, sources = MEDIA_SOURCE
     if (!RISK_LEVELS.has(item?.risk)) errors.push(`media.risk invalide pour ${item?.slug}: ${item?.risk}`);
     if (item?.editorialEnabled) {
       if (!item.siteUrl) errors.push(`media.siteUrl requis pour ${item.slug}`);
+      if (!item.editorialBrief?.trim()) errors.push(`media.editorialBrief requis pour ${item.slug}`);
       if (!Array.isArray(item.sections) || !['actualites', 'videos', 'guides'].every((section) => item.sections.includes(section))) {
         errors.push(`media.sections incomplètes pour ${item.slug}`);
       }
