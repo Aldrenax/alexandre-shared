@@ -9,14 +9,24 @@ if [[ "$(id -u)" -ne 0 ]]; then
   echo "Ce script doit être lancé en root sur le VPS chaimbault." >&2
   exit 1
 fi
-command -v jq >/dev/null || { echo "jq est requis." >&2; exit 1; }
-
 set -a
 source /etc/alexandre-media-engine/media-engine.env
 set +a
 preflight="$(/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs preflight --json)"
-printf '%s\n' "$preflight" | jq .
-if [[ "$(printf '%s' "$preflight" | jq -r '.readyForShadow')" != "true" ]]; then
+printf '%s\n' "$preflight" | /usr/bin/node -e '
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => console.log(JSON.stringify(JSON.parse(input), null, 2)));
+'
+if ! printf '%s' "$preflight" | /usr/bin/node -e '
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => {
+    process.exit(JSON.parse(input).readyForShadow === true ? 0 : 1);
+  });
+'; then
   echo "Préflight shadow refusé." >&2
   exit 1
 fi
