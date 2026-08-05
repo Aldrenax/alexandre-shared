@@ -17,7 +17,7 @@ import {
   qualifyCandidate,
 } from '../media/candidates.mjs';
 import { collectSource, enrichCandidateEvidence, extractReadableText } from '../media/source-collector.mjs';
-import { HermesClient, parseJsonPayload } from '../media/hermes-client.mjs';
+import { defaultHermesCommand, HermesClient, parseJsonPayload } from '../media/hermes-client.mjs';
 import { buildEditorialPrompt, normalizeDraft } from '../media/editorial.mjs';
 import { publicationDecision, qaDraft } from '../media/qa.mjs';
 import { MediaStateStore } from '../media/state-store.mjs';
@@ -164,6 +164,21 @@ test('Hermes: extraction JSON et x_search dégradé sans citation', async () => 
   assert.ok(calls[0].args.includes('openai-codex'));
   assert.ok(calls[0].args.includes('--model'));
   assert.ok(calls[0].args.includes('gpt-5.6-terra'));
+});
+
+test('Hermes: exécute le CLI avec l’utilisateur du volume OAuth quand il est configuré', () => {
+  assert.deepEqual(defaultHermesCommand({
+    HERMES_DOCKER_USER: '10000:10000',
+    HERMES_CONTAINER: 'hermes-agent',
+    HERMES_BIN: '/opt/hermes/.venv/bin/hermes',
+  }), [
+    '/usr/bin/docker',
+    'exec',
+    '--user',
+    '10000:10000',
+    'hermes-agent',
+    '/opt/hermes/.venv/bin/hermes',
+  ]);
 });
 
 test('état: idempotence et lease empêchent un double cycle', () => {

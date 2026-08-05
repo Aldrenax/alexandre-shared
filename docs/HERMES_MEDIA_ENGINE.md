@@ -115,10 +115,10 @@ Procédure prévue, à exécuter seulement après accord :
 
 ```bash
 ssh chaimbault
-docker exec -it hermes-agent /opt/hermes/.venv/bin/hermes auth add xai-oauth
+docker exec -it --user 10000:10000 hermes-agent /opt/hermes/.venv/bin/hermes auth add xai-oauth
 
 ssh askoptimize
-docker exec -it hermes-agent /opt/hermes/.venv/bin/hermes auth add xai-oauth
+docker exec -it --user 10000:10000 hermes-agent /opt/hermes/.venv/bin/hermes auth add xai-oauth
 ```
 
 La validation doit comporter une vraie recherche avec au moins une citation.

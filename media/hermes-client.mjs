@@ -9,9 +9,11 @@ function defaultHermesCommand(env = process.env) {
     if (!Array.isArray(parsed) || !parsed.length) throw new Error('HERMES_COMMAND_JSON doit être un tableau non vide');
     return parsed.map(String);
   }
+  const dockerUser = String(env.HERMES_DOCKER_USER || '').trim();
   return [
     env.DOCKER_BIN || '/usr/bin/docker',
     'exec',
+    ...(dockerUser ? ['--user', dockerUser] : []),
     env.HERMES_CONTAINER || 'hermes-agent',
     env.HERMES_BIN || '/opt/hermes/.venv/bin/hermes',
   ];
