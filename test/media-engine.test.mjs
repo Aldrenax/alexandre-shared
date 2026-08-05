@@ -28,7 +28,7 @@ import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '..
 import { MediaEngine } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
-import { ytDlpNetworkEnv } from '../lib/whisper.mjs';
+import { stickyProxyUrl, ytDlpNetworkEnv } from '../lib/whisper.mjs';
 import { resolveVideoMetadata } from '../lib/youtube.mjs';
 
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
@@ -44,9 +44,12 @@ test('registre: huit chaînes, six médias éditoriaux et sources officielles', 
 
 test('transcription YouTube: le proxy protégé est transmis à yt-dlp sans valeur par défaut', () => {
   assert.deepEqual(ytDlpNetworkEnv({ SAFE: 'yes' }), { SAFE: 'yes' });
-  const env = ytDlpNetworkEnv({ HTTP_PROXY_URL: '  http://proxy.example:8080  ' });
-  assert.equal(env.HTTPS_PROXY, 'http://proxy.example:8080');
-  assert.equal(env.https_proxy, 'http://proxy.example:8080');
+  const env = ytDlpNetworkEnv({ HTTP_PROXY_URL: '  http://proxy.example:8080  ' }, 'abcd1234');
+  assert.equal(env.HTTPS_PROXY, 'http://proxy.example:8080/');
+  assert.equal(env.https_proxy, 'http://proxy.example:8080/');
+  const sticky = stickyProxyUrl('http://user:password@geo.iproyal.com:12321', 'abcd1234');
+  assert.match(sticky, /password_session-abcd1234_lifetime-2h/);
+  assert.equal(stickyProxyUrl(sticky, 'wxyz5678'), sticky);
 });
 
 test('métadonnées YouTube: yt-dlp prévaut pour détecter un Short et sa miniature', () => {
