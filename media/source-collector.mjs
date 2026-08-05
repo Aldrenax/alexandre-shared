@@ -29,6 +29,25 @@ export function extractReadableText(html = '', maximumLength = 20_000) {
     .slice(0, maximumLength);
 }
 
+export function extractBalancedEvidence(html = '', maximumLength = 12_000) {
+  const cleaned = withoutBoilerplate(html);
+  const sections = [...cleaned.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>([\s\S]*?)(?=<h2\b|$)/gi)]
+    .map((match) => ({ heading: decodeHtml(match[1]), body: decodeHtml(match[2]) }))
+    .filter((section) => section.heading && section.body);
+  if (sections.length < 3) return extractReadableText(cleaned, maximumLength);
+
+  const firstHeadingIndex = cleaned.search(/<h2\b/i);
+  const introduction = decodeHtml(firstHeadingIndex > 0 ? cleaned.slice(0, firstHeadingIndex) : '').slice(0, 1_000);
+  const framingLength = introduction.length
+    + sections.reduce((total, section) => total + section.heading.length + 4, 0);
+  const available = Math.max(0, maximumLength - framingLength);
+  const sectionBudget = Math.max(80, Math.floor(available / sections.length));
+  return [
+    introduction,
+    ...sections.map(({ heading, body }) => `${heading}: ${body}`.slice(0, sectionBudget)),
+  ].filter(Boolean).join('\n\n').slice(0, maximumLength);
+}
+
 function pageLinks(html, source) {
   const items = [];
   const seen = new Set();
@@ -169,12 +188,12 @@ export async function enrichCandidateEvidence(candidate, {
       if (!/text\/html|text\/plain|application\/json/i.test(contentType)) throw new Error(`contenu non textuel: ${contentType}`);
       const text = await response.text();
       const evidenceText = /application\/json/i.test(contentType)
-        ? String(text).slice(0, 20_000)
-        : extractReadableText(text);
+        ? String(text).slice(0, 12_000)
+        : extractBalancedEvidence(text, 12_000);
       if (evidenceText.length >= 200) {
         enriched = {
           ...enriched,
-          excerpt: evidenceText.slice(0, 12_000),
+          excerpt: evidenceText,
           evidenceHash: digest(evidenceText),
           evidenceRetrievedAt: new Date().toISOString(),
           evidenceStatus: 'available',

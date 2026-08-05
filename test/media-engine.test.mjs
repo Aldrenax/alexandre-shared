@@ -16,7 +16,7 @@ import {
   clusterCandidates,
   qualifyCandidate,
 } from '../media/candidates.mjs';
-import { collectSource, enrichCandidateEvidence, extractReadableText } from '../media/source-collector.mjs';
+import { collectSource, enrichCandidateEvidence, extractBalancedEvidence, extractReadableText } from '../media/source-collector.mjs';
 import { defaultHermesCommand, HermesClient, parseJsonPayload } from '../media/hermes-client.mjs';
 import { buildEditorialPrompt, normalizeDraft } from '../media/editorial.mjs';
 import { publicationDecision, qaDraft } from '../media/qa.mjs';
@@ -218,6 +218,16 @@ test('collecteur officiel: une page index découvre ses articles et enrichit leu
   const enriched = await enrichCandidateEvidence({ sources: [{ url: collected.items[0].url }] }, { fetchImpl: async () => response });
   assert.equal(enriched.evidenceAvailableCount, 1);
   assert.match(enriched.sources[0].excerpt, /entre en vigueur/);
+});
+
+test('preuves longues: toutes les grandes sections restent représentées dans la limite du prompt', () => {
+  const html = Array.from({ length: 12 }, (_, index) => (
+    `<h2>Étape ${index + 1}</h2><p>Instruction officielle ${index + 1} ${`détail-${index + 1} `.repeat(600)}</p>`
+  )).join('');
+  const evidence = extractBalancedEvidence(html, 12_000);
+  assert.ok(evidence.length <= 12_000);
+  for (let index = 1; index <= 12; index += 1) assert.match(evidence, new RegExp(`Étape ${index}(?:\\D|$)`));
+  assert.match(evidence, /Instruction officielle 12/);
 });
 
 test('candidats: URL canonique, regroupement et source officielle obligatoire en finance', () => {
