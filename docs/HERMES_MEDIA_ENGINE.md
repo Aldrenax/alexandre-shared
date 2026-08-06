@@ -1,7 +1,7 @@
 # Hermes Media Engine
 
-Statut : développement local, publication désactivée. Aucun fichier de ce dépôt
-n'a été déployé sur un VPS.
+Statut au 6 août 2026 : moteur déployé en shadow sur `chaimbault`, publication
+automatique et push désactivés.
 
 ## Périmètre
 
@@ -96,15 +96,41 @@ Sans ces éléments, le cycle retourne un blocage explicite. Le guide cible
 │   ├── candidates/
 │   ├── qualified/
 │   ├── drafts/
-│   └── events/
+│   ├── events/
+│   └── newsletter-attribution/
 └── state/
     ├── events.json
+    ├── newsletter-attribution.json
     ├── source-health.json
     └── x-search-latest.json
 ```
 
 Les écritures JSON sont atomiques. Le lease `network-cycle` évite un cycle
 concurrent sur les deux VPS.
+
+## Attribution newsletter shadow
+
+Le service `alexandre-newsletter-shadow.service` prépare la simplification vers
+une audience Systeme.io unique sans modifier les formulaires publics :
+
+- écoute locale uniquement sur `127.0.0.1:8097` ;
+- refuse tout média inactif et toute page dont le domaine ne correspond pas au média ;
+- exige un consentement explicite, une version de formulaire et une clé d'idempotence ;
+- conserve le média, la page, le référent sans query string, les UTM et l'heure ;
+- remplace l'adresse email par un HMAC SHA-256 avant toute écriture ;
+- n'appelle jamais Systeme.io et marque chaque événement `shadow-only`.
+
+Activation sur une release déjà installée :
+
+```bash
+sudo deploy/activate-newsletter-shadow.sh --apply
+curl --fail http://127.0.0.1:8097/health
+```
+
+Le script génère le secret HMAC dans
+`/etc/alexandre-media-engine/newsletter-shadow.env`, sans l'afficher. L'étape
+suivante, après validation séparée, sera de brancher un formulaire de test puis
+la synchronisation vers l'unique tag et l'unique séquence Systeme.io.
 
 ## Authentification Grok
 

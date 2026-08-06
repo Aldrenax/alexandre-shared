@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "media:validate": "node bin/media-engine.mjs validate",
-    "media:dry-run": "node bin/media-engine.mjs run --dry-run"
+    "media:dry-run": "node bin/media-engine.mjs run --dry-run",
+    "newsletter:shadow": "node bin/newsletter-shadow-server.mjs"
   },
   "bin": {
     "alexandre-media-engine": "./bin/media-engine.mjs"
@@ -29,6 +30,7 @@
     "./media/site-publisher.mjs": "./media/site-publisher.mjs",
     "./media/publication-worker.mjs": "./media/publication-worker.mjs",
     "./media/preflight.mjs": "./media/preflight.mjs",
+    "./media/newsletter-attribution.mjs": "./media/newsletter-attribution.mjs",
     "./media/engine.mjs": "./media/engine.mjs"
   },
   "dependencies": {
