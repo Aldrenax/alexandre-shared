@@ -69,7 +69,7 @@ test('transcription YouTube: chaque reprise renouvelle la session proxy', async 
   const attempts = [];
   const result = await runYtDlpWithRetries(['--version'], {
     attempts: 3,
-    env: { HTTP_PROXY_URL: 'http://user:password@geo.iproyal.com:12321' },
+    env: { HTTP_PROXY_URL: 'http://user:password@geo.iproyal.com:12321', YTDLP_ALLOW_DIRECT_FALLBACK: 'false' },
     waitImpl: async () => {},
     runImpl: async (_command, _args, options) => {
       attempts.push(options.env.HTTPS_PROXY);
