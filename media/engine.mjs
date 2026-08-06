@@ -47,6 +47,25 @@ function xItems(result, media) {
   }));
 }
 
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function xSearchPolicy(env = process.env) {
+  return {
+    enabled: String(env.MEDIA_ENGINE_X_SEARCH_ENABLED || 'true').toLowerCase() !== 'false',
+    officialOnly: String(env.MEDIA_ENGINE_X_SEARCH_OFFICIAL_ONLY || 'true').toLowerCase() !== 'false',
+    maxQueries: positiveInteger(env.MEDIA_ENGINE_X_SEARCH_MAX_QUERIES, 6),
+    intervalHours: positiveInteger(env.MEDIA_ENGINE_X_SEARCH_INTERVAL_HOURS, 168),
+    quotaCooldownHours: positiveInteger(env.MEDIA_ENGINE_X_SEARCH_QUOTA_COOLDOWN_HOURS, 168),
+  };
+}
+
+function quotaExceeded(value = '') {
+  return /(quota|weekly\s+limit|limite\s+hebdomadaire|limite.*semaine|usage\s+limit)/i.test(String(value));
+}
+
 const HERMES_CONTAINER_IMAGE_ROOT = '/opt/data/cache/images';
 const DEFAULT_HERMES_HOST_IMAGE_ROOT = '/var/lib/hermes-agent/cache/images';
 const MAX_BANNER_BYTES = 30 * 1024 * 1024;
@@ -234,6 +253,52 @@ export class MediaEngine {
   async researchX({ mediaSlug = null, dryRun = false, fromDate = '', toDate = '' } = {}) {
     const selected = this.selectedMedia(mediaSlug);
     const results = [];
+    const policy = xSearchPolicy(this.env);
+    const now = new Date();
+    const latest = this.store.read('x-search-latest', { updatedAt: null });
+    const budget = this.store.read('x-search-budget', { cooldownUntil: null });
+    const cooldownUntil = Date.parse(budget.cooldownUntil || '');
+    const lastSearchAt = Date.parse(latest.updatedAt || '');
+    const deferredReason = !policy.enabled
+      ? 'x-search-disabled'
+      : (!Number.isNaN(cooldownUntil) && cooldownUntil > now.getTime())
+        ? 'x-search-quota-cooldown'
+        : (!Number.isNaN(lastSearchAt) && lastSearchAt + policy.intervalHours * 3_600_000 > now.getTime())
+          ? 'x-search-interval-not-elapsed'
+          : null;
+    if (deferredReason && !dryRun) {
+      this.store.write('x-search-policy', {
+        version: 1,
+        checkedAt: now.toISOString(),
+        deferredReason,
+        policy,
+        cooldownUntil: budget.cooldownUntil || null,
+        nextEligibleAt: !Number.isNaN(lastSearchAt)
+          ? new Date(lastSearchAt + policy.intervalHours * 3_600_000).toISOString()
+          : null,
+      });
+      return results;
+    }
+    const searches = selected.flatMap((media) => [
+      ...(policy.officialOnly ? [] : (media.xQueries || []).map((query) => ({ media, query, officialSearch: false, allowedHandles: [] }))),
+      ...(media.officialXQueries || []).map((search) => ({
+        media,
+        query: search.query,
+        officialSearch: true,
+        allowedHandles: search.allowedHandles || [],
+      })),
+    ]).slice(0, policy.maxQueries);
+    if (dryRun) {
+      return searches.map((search) => ({
+        mediaSlug: search.media.slug,
+        query: search.query,
+        allowedHandles: search.allowedHandles,
+        officialSearch: search.officialSearch,
+        planned: true,
+        degraded: null,
+        citations: [],
+      }));
+    }
     let xaiAvailable = true;
     let unavailableReason = '';
     if (!dryRun) {
@@ -246,92 +311,60 @@ export class MediaEngine {
         unavailableReason = `auth Hermes inaccessible: ${String(error?.message || error)}`;
       }
     }
-    for (const media of selected) {
-      for (const query of media.xQueries || []) {
-        if (dryRun) {
-          results.push({ mediaSlug: media.slug, query, planned: true, degraded: null, citations: [] });
-          continue;
-        }
-        if (!xaiAvailable) {
-          results.push({
-            mediaSlug: media.slug,
-            query,
-            answer: '',
-            citations: [],
-            posts: [],
-            degraded: true,
-            degradedReason: unavailableReason,
-            observedAt: new Date().toISOString(),
-            sourceId: 'x-search',
-          });
-          continue;
-        }
-        let result;
-        try {
-          result = await this.hermes.xSearch({ query, fromDate, toDate, mediaSlug: media.slug });
-        } catch (error) {
-          result = {
-            query,
-            answer: '',
-            citations: [],
-            posts: [],
-            degraded: true,
-            degradedReason: String(error?.message || error),
-            observedAt: new Date().toISOString(),
-            sourceId: 'x-search',
-          };
-        }
-        results.push({ ...result, mediaSlug: media.slug });
-        for (const item of xItems(result, media)) this.store.enqueue('candidates', item.id, item);
+    for (const search of searches) {
+      if (!xaiAvailable) {
+        results.push({
+          mediaSlug: search.media.slug,
+          query: search.query,
+          allowedHandles: search.allowedHandles,
+          officialSearch: search.officialSearch,
+          answer: '',
+          citations: [],
+          posts: [],
+          degraded: true,
+          degradedReason: unavailableReason,
+          observedAt: new Date().toISOString(),
+          sourceId: 'x-search',
+        });
+        continue;
       }
-      for (const search of media.officialXQueries || []) {
-        if (dryRun) {
-          results.push({ mediaSlug: media.slug, query: search.query, allowedHandles: search.allowedHandles, officialSearch: true, planned: true, degraded: null, citations: [] });
-          continue;
-        }
-        if (!xaiAvailable) {
-          results.push({
-            mediaSlug: media.slug,
-            query: search.query,
-            allowedHandles: search.allowedHandles,
-            officialSearch: true,
-            answer: '',
-            citations: [],
-            posts: [],
-            degraded: true,
-            degradedReason: unavailableReason,
-            observedAt: new Date().toISOString(),
-            sourceId: 'x-search',
-          });
-          continue;
-        }
-        let result;
-        try {
-          result = await this.hermes.xSearch({
-            query: search.query,
-            allowedHandles: search.allowedHandles,
-            fromDate,
-            toDate,
-            mediaSlug: media.slug,
-          });
-        } catch (error) {
-          result = {
-            query: search.query,
-            answer: '',
-            citations: [],
-            posts: [],
-            degraded: true,
-            degradedReason: String(error?.message || error),
-            observedAt: new Date().toISOString(),
-            sourceId: 'x-search',
-          };
-        }
-        const officialResult = { ...result, mediaSlug: media.slug, officialSearch: true };
-        results.push(officialResult);
-        for (const item of xItems(officialResult, media)) this.store.enqueue('candidates', item.id, item);
+      let result;
+      try {
+        result = await this.hermes.xSearch({
+          query: search.query,
+          allowedHandles: search.allowedHandles,
+          fromDate,
+          toDate,
+          mediaSlug: search.media.slug,
+        });
+      } catch (error) {
+        result = {
+          query: search.query,
+          answer: '',
+          citations: [],
+          posts: [],
+          degraded: true,
+          degradedReason: String(error?.message || error),
+          observedAt: new Date().toISOString(),
+          sourceId: 'x-search',
+        };
+      }
+      const enriched = { ...result, mediaSlug: search.media.slug, officialSearch: search.officialSearch };
+      results.push(enriched);
+      for (const item of xItems(enriched, search.media)) this.store.enqueue('candidates', item.id, item);
+      if (quotaExceeded(enriched.degradedReason) || quotaExceeded(enriched.answer)) {
+        const cooldown = new Date(now.getTime() + policy.quotaCooldownHours * 3_600_000).toISOString();
+        this.store.write('x-search-budget', {
+          version: 1,
+          observedAt: new Date().toISOString(),
+          reason: 'x-search-quota-exhausted',
+          cooldownUntil: cooldown,
+          policy,
+        });
+        break;
       }
     }
-    if (!dryRun) this.store.write('x-search-latest', { version: 1, updatedAt: new Date().toISOString(), results });
+    this.store.write('x-search-latest', { version: 1, updatedAt: new Date().toISOString(), results, policy });
     return results;
   }
 

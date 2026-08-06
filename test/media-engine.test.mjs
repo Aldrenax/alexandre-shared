@@ -886,7 +886,7 @@ test('recherche X: une panne Grok dégrade l’enrichissement sans interrompre l
     },
   });
   const results = await engine.researchX({ mediaSlug: 'logiciels' });
-  assert.equal(results.length, 3);
+  assert.equal(results.length, 1);
   assert.ok(results.every((result) => result.degraded));
   assert.ok(results.every((result) => result.degradedReason === 'xai-oauth absent'));
   assert.equal(xSearchCalls, 0);
@@ -897,4 +897,22 @@ test('recherche X: une panne Grok dégrade l’enrichissement sans interrompre l
   assert.equal(health.status, 'degraded');
   assert.deepEqual(health.blockers, []);
   assert.ok(health.warnings.includes('x-search-unavailable'));
+});
+
+test('recherche X: le budget hebdomadaire évite les appels redondants entre deux fenêtres', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-x-budget-'));
+  const store = new MediaStateStore(root);
+  store.write('x-search-latest', { version: 1, updatedAt: new Date().toISOString(), results: [] });
+  let xSearchCalls = 0;
+  const engine = new MediaEngine({
+    store,
+    hermes: {
+      authList: async () => ({ raw: 'xai-oauth', providers: ['xai-oauth'] }),
+      xSearch: async () => { xSearchCalls += 1; return { citations: [], posts: [], degraded: false }; },
+    },
+  });
+  const results = await engine.researchX({ mediaSlug: 'logiciels' });
+  assert.deepEqual(results, []);
+  assert.equal(xSearchCalls, 0);
+  assert.equal(store.read('x-search-policy').deferredReason, 'x-search-interval-not-elapsed');
 });
