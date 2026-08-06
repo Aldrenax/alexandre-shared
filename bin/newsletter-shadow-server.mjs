@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from 'node:http';
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -107,4 +108,9 @@ export function startNewsletterShadowServer({
   return server;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) startNewsletterShadowServer();
+export function isDirectExecution(importMetaUrl, argvPath = process.argv[1]) {
+  if (!argvPath) return false;
+  return importMetaUrl === pathToFileURL(realpathSync(argvPath)).href;
+}
+
+if (isDirectExecution(import.meta.url)) startNewsletterShadowServer();

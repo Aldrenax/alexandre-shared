@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
-import { createNewsletterShadowHandler } from '../bin/newsletter-shadow-server.mjs';
+import { createNewsletterShadowHandler, isDirectExecution } from '../bin/newsletter-shadow-server.mjs';
 import {
   newsletterHealth,
   normalizeNewsletterAttribution,
@@ -15,6 +16,15 @@ import { MediaStateStore } from '../media/state-store.mjs';
 
 const SECRET = 'test-secret-that-is-longer-than-thirty-two-characters';
 const NOW = new Date('2026-08-06T12:00:00.000Z');
+
+test('newsletter shadow: le lanceur reconnaît une exécution via un lien symbolique', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'newsletter-entrypoint-'));
+  const target = join(directory, 'server.mjs');
+  const symlink = join(directory, 'current-server.mjs');
+  writeFileSync(target, '');
+  symlinkSync(target, symlink);
+  assert.equal(isDirectExecution(pathToFileURL(realpathSync(target)).href, symlink), true);
+});
 
 function validPayload(mediaSlug = 'chaimbault') {
   const media = activeMedia().find((item) => item.slug === mediaSlug);
