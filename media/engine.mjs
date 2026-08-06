@@ -288,12 +288,20 @@ export class MediaEngine {
         allowedHandles: search.allowedHandles || [],
       })),
     ]).slice(0, policy.maxQueries);
+    const effectiveFromDate = fromDate || new Date(
+      !Number.isNaN(lastSearchAt)
+        ? lastSearchAt
+        : now.getTime() - policy.intervalHours * 3_600_000,
+    ).toISOString().slice(0, 10);
+    const effectiveToDate = toDate || now.toISOString().slice(0, 10);
     if (dryRun) {
       return searches.map((search) => ({
         mediaSlug: search.media.slug,
         query: search.query,
         allowedHandles: search.allowedHandles,
         officialSearch: search.officialSearch,
+        fromDate: effectiveFromDate,
+        toDate: effectiveToDate,
         planned: true,
         degraded: null,
         citations: [],
@@ -333,8 +341,8 @@ export class MediaEngine {
         result = await this.hermes.xSearch({
           query: search.query,
           allowedHandles: search.allowedHandles,
-          fromDate,
-          toDate,
+          fromDate: effectiveFromDate,
+          toDate: effectiveToDate,
           mediaSlug: search.media.slug,
         });
       } catch (error) {
@@ -364,7 +372,13 @@ export class MediaEngine {
         break;
       }
     }
-    this.store.write('x-search-latest', { version: 1, updatedAt: new Date().toISOString(), results, policy });
+    this.store.write('x-search-latest', {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      searchWindow: { fromDate: effectiveFromDate, toDate: effectiveToDate },
+      results,
+      policy,
+    });
     return results;
   }
 

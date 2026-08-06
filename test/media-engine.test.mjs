@@ -916,3 +916,30 @@ test('recherche X: le budget hebdomadaire évite les appels redondants entre deu
   assert.equal(xSearchCalls, 0);
   assert.equal(store.read('x-search-policy').deferredReason, 'x-search-interval-not-elapsed');
 });
+
+test('recherche X: une fenêtre éligible est bornée depuis le dernier passage', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-x-window-'));
+  const store = new MediaStateStore(root);
+  const previousAt = new Date(Date.now() - 8 * 24 * 3_600_000);
+  store.write('x-search-latest', { version: 1, updatedAt: previousAt.toISOString(), results: [] });
+  const calls = [];
+  const engine = new MediaEngine({
+    store,
+    hermes: {
+      authList: async () => ({ raw: 'xai-oauth', providers: ['xai-oauth'] }),
+      xSearch: async (options) => {
+        calls.push(options);
+        return { query: options.query, citations: [], posts: [], degraded: false };
+      },
+    },
+  });
+  const results = await engine.researchX({ mediaSlug: 'logiciels' });
+  assert.equal(results.length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].fromDate, previousAt.toISOString().slice(0, 10));
+  assert.equal(calls[0].toDate, new Date().toISOString().slice(0, 10));
+  assert.deepEqual(store.read('x-search-latest').searchWindow, {
+    fromDate: calls[0].fromDate,
+    toDate: calls[0].toDate,
+  });
+});
