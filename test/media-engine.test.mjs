@@ -82,6 +82,22 @@ test('transcription YouTube: chaque reprise renouvelle la session proxy', async 
   assert.equal(new Set(attempts).size, 3);
 });
 
+test('transcription YouTube: après un proxy en échec, le réseau direct est essayé par défaut', async () => {
+  const plans = [];
+  const result = await runYtDlpWithRetries(['--version'], {
+    attempts: 1,
+    env: { HTTP_PROXY_URL: 'http://user:password@geo.iproyal.com:12321' },
+    waitImpl: async () => {},
+    runImpl: async (_command, _args, options) => {
+      plans.push(Boolean(options.env.HTTPS_PROXY));
+      if (plans.length === 1) throw new Error('proxy timeout');
+      return { stdout: 'ok', stderr: '' };
+    },
+  });
+  assert.equal(result.stdout, 'ok');
+  assert.deepEqual(plans, [true, false]);
+});
+
 test('transcription YouTube: un résultat complet est conservé dans le cache local', () => {
   const root = mkdtempSync(join(tmpdir(), 'whisper-cache-'));
   const env = { WHISPER_TRANSCRIPT_CACHE_DIR: root };
