@@ -494,12 +494,25 @@ export class MediaEngine {
           continue;
         }
         if (!info.transcriptText || info.transcriptText.length < 500) {
+          // Le moteur ne reçoit jamais de jeton Google. Il dépose seulement une
+          // demande idempotente que le Studio, propriétaire des identifiants OAuth,
+          // pourra traiter lorsqu'un profil aura explicitement reçu le scope captions.
+          this.store.enqueue('caption-requests', unseen.videoId, {
+            version: 1,
+            videoId: unseen.videoId,
+            mediaSlug: media.slug,
+            channelId: media.channelId,
+            title: info.title || unseen.title || null,
+            languagePreferences: ['fr', 'en'],
+            requestedAt: new Date().toISOString(),
+            status: 'pending',
+          });
           this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
             status: 'retryable-failure',
-            reason: 'transcript-unavailable',
+            reason: 'transcript-unavailable-caption-requested',
             nextRetryAt: retryAt(6),
           });
-          results.push({ mediaSlug: media.slug, failed: true, reason: 'transcript-unavailable', videoId: unseen.videoId });
+          results.push({ mediaSlug: media.slug, failed: true, reason: 'transcript-unavailable-caption-requested', videoId: unseen.videoId });
           continue;
         }
         const thumbnailPath = join(this.store.assetsDir, media.slug, `${unseen.videoId}-youtube.jpg`);

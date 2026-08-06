@@ -101,7 +101,7 @@ export class MediaStateStore {
   }
 
   enqueue(kind, id, payload) {
-    if (!['candidates', 'qualified', 'drafts', 'events'].includes(kind)) throw new Error(`File inconnue: ${kind}`);
+    if (!['candidates', 'qualified', 'drafts', 'events', 'caption-requests'].includes(kind)) throw new Error(`File inconnue: ${kind}`);
     const directory = join(this.queueDir, kind);
     ensureDir(directory);
     const safeId = String(id).replace(/[^a-z0-9._-]/gi, '-').slice(0, 160);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -104,6 +104,14 @@ test('transcription YouTube: un résultat complet est conservé dans le cache lo
   const transcript = 'transcription '.repeat(50);
   assert.ok(writeCachedTranscript('dzQLM3agA_o', transcript, env));
   assert.equal(readCachedTranscript('dzQLM3agA_o', env), transcript.trim());
+});
+
+test('transcription YouTube: le cache de sous-titres Studio est partagé avec Hermes sans secret OAuth', () => {
+  const root = mkdtempSync(join(tmpdir(), 'caption-cache-'));
+  const env = { MEDIA_ENGINE_RUNTIME_DIR: root };
+  const transcript = 'sous-titre officiel '.repeat(50);
+  assert.ok(writeCachedTranscript('caption-123', transcript, env));
+  assert.equal(readCachedTranscript('caption-123', env), transcript.trim());
 });
 
 test('métadonnées YouTube: yt-dlp prévaut pour détecter un Short et sa miniature', () => {
@@ -240,6 +248,23 @@ test('cycle vidéo: une panne est isolée et reçoit un délai de reprise', asyn
   assert.equal(event.status, 'retryable-failure');
   assert.ok(Date.parse(event.nextRetryAt) > Date.now());
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:investissement:broken-1'), false);
+});
+
+test('cycle vidéo: une transcription absente demande les sous-titres au Studio sans toucher OAuth', async () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-caption-request-')));
+  const engine = new MediaEngine({
+    store,
+    getChannelFeedImpl: async () => [
+      { videoId: 'caption-123', link: 'https://www.youtube.com/watch?v=caption-123', title: 'Vidéo à sous-titrer' },
+    ],
+    getVideoInfoImpl: async () => ({ transcriptText: '', title: 'Vidéo à sous-titrer', isShort: false, isLive: false }),
+  });
+  const result = await engine.runVideoCycle({ mediaSlug: 'investissement' });
+  assert.equal(result[0].reason, 'transcript-unavailable-caption-requested');
+  const requests = store.read('events');
+  assert.equal(requests.events['video-draft:investissement:caption-123'].reason, 'transcript-unavailable-caption-requested');
+  const requestPath = join(store.queueDir, 'caption-requests', 'caption-123.json');
+  assert.equal(JSON.parse(readFileSync(requestPath, 'utf8')).channelId, mediaBySlug('investissement').channelId);
 });
 
 test('file éditoriale: même source ou titre voisin est bloqué sur un même média, sans bloquer un autre média', () => {
