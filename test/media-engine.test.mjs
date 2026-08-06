@@ -278,6 +278,7 @@ test('file éditoriale: même source ou titre voisin est bloqué sur un même m�
   }];
   assert.equal(findDraftConflict(candidate, drafts, { mediaSlug: 'affiliation', contentType: 'news' }).reason, 'same-source-url');
   assert.equal(findDraftConflict(candidate, drafts, { mediaSlug: 'logiciels', contentType: 'news' }), null);
+  assert.equal(findDraftConflict(candidate, [{ ...drafts[0], qa: { passed: false } }], { mediaSlug: 'affiliation', contentType: 'news' }), null);
   assert.equal(findInternalLinkConflict(candidate, [{ anchor: 'Google actualise son SEO Starter Guide avec un cap débutant', path: '/actualites/google-seo-starter-guide/' }]).path, '/actualites/google-seo-starter-guide/');
 });
 
@@ -584,6 +585,7 @@ test('rédaction guide: le paquet conserve les preuves détaillées sans imposer
     },
   });
   assert.match(prompt, /Ne compare des alternatives que si/);
+  assert.match(prompt, /vise au moins 3900 mots utiles/);
   assert.ok(prompt.includes(excerpt.slice(0, 8_000)));
 });
 

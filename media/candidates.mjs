@@ -50,6 +50,9 @@ export function findDraftConflict(candidate, drafts = [], {
   const candidateUrls = urlsFor(candidate);
   for (const draft of drafts) {
     if (draft?.mediaSlug !== mediaSlug || draft?.contentType !== contentType) continue;
+    // A failed QA draft is an audit artifact, not editorial inventory. Keeping
+    // it on disk must not prevent the next revised editorial revision.
+    if (draft?.qa && !draft.qa.passed) continue;
     if (draft?.publicationEligibility?.status === 'quarantined') continue;
     const draftUrls = urlsFor(draft);
     const sharedUrl = [...candidateUrls].find((url) => draftUrls.has(url));

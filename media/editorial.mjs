@@ -13,7 +13,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 9;
+export const EDITORIAL_REVISION = 10;
 
 function normalizedSlug(value, fallback = '') {
   return String(value || fallback)
@@ -83,11 +83,17 @@ function complianceInstructions(media) {
 
 function commonInstructions({ media, candidate, type, internalLinks, offer }) {
   const requirement = CONTENT_REQUIREMENTS[type];
+  // Leave a deliberate margin for model-side word-count drift. The QA floor
+  // remains the publication gate; this target simply prevents near-miss drafts.
+  const wordTarget = type === 'guide' ? requirement.minimumWords + 400 : requirement.minimumWords;
   const sources = sourcePacket(candidate, type === 'guide' ? 12_000 : 3_000);
   return [
     `Tu rédiges pour ${media.name} (${media.siteUrl}).`,
     `Rubrique obligatoire: ${requirement.section}.`,
     `Longueur attendue: ${requirement.minimumWords} à ${requirement.maximumWords} mots utiles.`,
+    type === 'guide'
+      ? `Objectif de sécurité: vise au moins ${wordTarget} mots utiles afin de ne jamais descendre sous le seuil QA de ${requirement.minimumWords} mots après normalisation.`
+      : null,
     `Risque éditorial: ${media.risk}.`,
     '',
     'RÈGLES DE PREUVE:',
