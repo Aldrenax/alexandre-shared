@@ -55,6 +55,29 @@ test('registre: huit chaînes, six médias éditoriaux et sources officielles', 
   assert.equal(mediaBySlug('askoptimize').editorialEnabled, false);
 });
 
+test('santé: une source officielle complémentaire indisponible ne bloque pas le réseau', () => {
+  const banqueDeFrance = MEDIA_SOURCES.find((source) => source.id === 'banque-france-news');
+  assert.equal(banqueDeFrance.required, false);
+  const root = mkdtempSync(join(tmpdir(), 'media-optional-source-'));
+  const store = new MediaStateStore(root);
+  store.write('source-health', {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sources: {
+      amf: { sourceId: 'amf', required: true, status: 'healthy' },
+      bce: { sourceId: 'bce', required: true, status: 'healthy' },
+      banqueDeFrance: { sourceId: 'banque-france-news', required: false, status: 'quarantined' },
+    },
+  });
+  store.write('last-runs', {
+    version: 1,
+    runs: { run: { at: new Date().toISOString(), status: 'success' } },
+  });
+  const health = new MediaEngine({ store }).healthReport();
+  assert.equal(health.status, 'healthy');
+  assert.ok(!health.blockers.includes('required-sources-degraded'));
+});
+
 test('transcription YouTube: le proxy protégé est transmis à yt-dlp sans valeur par défaut', () => {
   assert.deepEqual(ytDlpNetworkEnv({ SAFE: 'yes' }), { SAFE: 'yes' });
   const env = ytDlpNetworkEnv({ HTTP_PROXY_URL: '  http://proxy.example:8080  ' }, 'abcd1234');

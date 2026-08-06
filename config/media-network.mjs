@@ -238,7 +238,10 @@ export const MEDIA_SOURCES = Object.freeze([
   source({ id: 'amf-news', name: 'AMF À la une', type: 'page', pageMode: 'links', url: 'https://www.amf-france.org/fr/actualites-publications/la-une', tier: 1, official: true, media: ['investissement'] }),
   source({ id: 'ecb-press', name: 'BCE Communiqués et prises de parole', type: 'rss', url: 'https://www.ecb.europa.eu/rss/press.html', tier: 0, official: true, media: ['investissement'] }),
   source({ id: 'ecb-blog', name: 'BCE Blog', type: 'rss', url: 'https://www.ecb.europa.eu/rss/blog.html', tier: 0, official: true, media: ['investissement'] }),
-  source({ id: 'banque-france-news', name: 'Banque de France Actualités', type: 'page', pageMode: 'links', url: 'https://www.banque-france.fr/fr/actualites-et-evenements', tier: 1, official: true, media: ['investissement'] }),
+  // Source officielle complémentaire. L'AMF et la BCE restent les références
+  // requises : une indisponibilité isolée de la Banque de France ne doit pas
+  // immobiliser l'ensemble du réseau éditorial.
+  source({ id: 'banque-france-news', name: 'Banque de France Actualités', type: 'page', pageMode: 'links', required: false, url: 'https://www.banque-france.fr/fr/actualites-et-evenements', tier: 1, official: true, media: ['investissement'] }),
   source({ id: 'franceinfo-economie', name: 'Franceinfo Économie', type: 'rss', url: 'https://www.franceinfo.fr/economie.rss', tier: 2, official: false, media: ['investissement'] }),
   source({ id: 'cointribune', name: 'Cointribune', type: 'rss', url: 'https://www.cointribune.com/feed/', tier: 2, official: false, media: ['investissement'] }),
   source({ id: 'journal-du-coin', name: 'Journal du Coin', type: 'rss', url: 'https://journalducoin.com/feed/', tier: 2, official: false, media: ['investissement'] }),
