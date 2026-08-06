@@ -29,6 +29,50 @@ export function similarity(left, right) {
   return intersection / (a.size + b.size - intersection);
 }
 
+function urlsFor(value = {}) {
+  return new Set([
+    value.primaryUrl,
+    ...(value.sourceUrls || []),
+    ...(value.sources || []).map((source) => source?.url),
+  ].filter((url) => /^https?:\/\//.test(String(url || ''))).map(canonicalUrl));
+}
+
+/**
+ * Détecte un conflit éditorial à l'intérieur d'un même média. La même annonce
+ * peut être traitée par deux sites si l'angle est différent ; elle ne doit pas
+ * créer deux articles concurrents sur le même site.
+ */
+export function findDraftConflict(candidate, drafts = [], {
+  mediaSlug,
+  contentType = 'news',
+  threshold = 0.58,
+} = {}) {
+  const candidateUrls = urlsFor(candidate);
+  for (const draft of drafts) {
+    if (draft?.mediaSlug !== mediaSlug || draft?.contentType !== contentType) continue;
+    if (draft?.publicationEligibility?.status === 'quarantined') continue;
+    const draftUrls = urlsFor(draft);
+    const sharedUrl = [...candidateUrls].find((url) => draftUrls.has(url));
+    if (sharedUrl) return { reason: 'same-source-url', sharedUrl, draft };
+    if (similarity(candidate.title, draft.title) >= threshold) {
+      return { reason: 'similar-title', sharedUrl: null, draft };
+    }
+  }
+  return null;
+}
+
+export function findInternalLinkConflict(candidate, internalLinks = [], { threshold = 0.66 } = {}) {
+  const candidateUrls = urlsFor(candidate);
+  for (const entry of internalLinks) {
+    const path = typeof entry === 'string' ? entry : entry?.path || entry?.url || '';
+    const anchor = typeof entry === 'string' ? entry : entry?.anchor || entry?.title || path;
+    if (candidateUrls.has(canonicalUrl(path)) || similarity(candidate.title, anchor) >= threshold) {
+      return { path, anchor };
+    }
+  }
+  return null;
+}
+
 export function canonicalUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);

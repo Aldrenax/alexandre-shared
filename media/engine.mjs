@@ -4,7 +4,12 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { getChannelFeed, getVideoInfo, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 import { activeMedia, assertValidRegistry, mediaBySlug, sourcesForMedia } from './registry.mjs';
 import { collectSources, enrichCandidateEvidence } from './source-collector.mjs';
-import { clusterCandidates, qualifyCandidate } from './candidates.mjs';
+import {
+  clusterCandidates,
+  findDraftConflict,
+  findInternalLinkConflict,
+  qualifyCandidate,
+} from './candidates.mjs';
 import {
   buildBannerPrompt,
   buildEditorialPrompt,
@@ -355,6 +360,26 @@ export class MediaEngine {
     const media = mediaBySlug(candidate.mediaSlug);
     if (!media?.editorialEnabled) throw new Error(`Média non actif: ${candidate.mediaSlug}`);
     if (candidate.status !== 'qualified') throw new Error(`Candidat non qualifié: ${candidate.id}`);
+    const draftConflict = findDraftConflict(
+      candidate,
+      this.store.listDrafts(media.slug).map((entry) => ({ ...entry.draft, draftPath: entry.path })),
+      { mediaSlug: media.slug, contentType },
+    );
+    if (draftConflict) {
+      return {
+        status: 'blocked',
+        reason: `duplicate-draft:${draftConflict.reason}`,
+        duplicateDraftPath: draftConflict.draft.draftPath || null,
+      };
+    }
+    const publishedConflict = findInternalLinkConflict(candidate, this.internalLinks[media.slug] || []);
+    if (publishedConflict) {
+      return {
+        status: 'blocked',
+        reason: 'already-published-or-similar',
+        publishedPath: publishedConflict.path,
+      };
+    }
     const prompt = buildEditorialPrompt({
       media,
       candidate,
@@ -394,7 +419,15 @@ export class MediaEngine {
     }
 
     const qa = qaDraft(draft, media, { candidate, requireBanner: true });
-    draft = { ...draft, qa };
+    draft = {
+      ...draft,
+      qa,
+      publicationEligibility: {
+        status: qa.passed ? 'eligible' : 'blocked',
+        checkedAt: new Date().toISOString(),
+        reason: qa.passed ? null : 'qa-failed',
+      },
+    };
     const draftPath = this.store.saveDraft(media.slug, draft);
     const editorialEvent = {
       version: 1,

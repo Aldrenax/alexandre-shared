@@ -14,8 +14,11 @@ import {
 import {
   canonicalUrl,
   clusterCandidates,
+  findDraftConflict,
+  findInternalLinkConflict,
   qualifyCandidate,
 } from '../media/candidates.mjs';
+import { curateDraftQueue } from '../media/draft-curation.mjs';
 import { collectSource, enrichCandidateEvidence, extractBalancedEvidence, extractReadableText } from '../media/source-collector.mjs';
 import { defaultHermesCommand, HermesClient, parseJsonPayload } from '../media/hermes-client.mjs';
 import { buildEditorialPrompt, normalizeDraft } from '../media/editorial.mjs';
@@ -38,7 +41,7 @@ import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
 import {
   readCachedTranscript, runYtDlpWithRetries, stickyProxyUrl, writeCachedTranscript, ytDlpNetworkEnv,
 } from '../lib/whisper.mjs';
-import { resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
+import { getChannelFeed, getChannelFeedWithYtDlp, resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
   assert.deepEqual(validateRegistry(), []);
@@ -112,6 +115,31 @@ test('miniature YouTube: le CDN standard prend le relais si les métadonnées so
   });
   assert.match(selected.url, /hqdefault\.jpg$/);
   assert.equal(requested.length, 2);
+});
+
+test('flux YouTube: yt-dlp prend le relais après un RSS 404 et une chaîne vide reste saine', async () => {
+  const calls = [];
+  const fallback = async (channelId) => {
+    calls.push(channelId);
+    return [{ videoId: 'fallback-1', title: 'Vidéo récupérée', link: 'https://www.youtube.com/watch?v=fallback-1', pubDate: new Date('2026-08-06T00:00:00Z') }];
+  };
+  const feed = await getChannelFeed('UC-fallback', {
+    fetchImpl: async () => new Response('', { status: 404 }),
+    ytDlpFeedImpl: fallback,
+  });
+  assert.equal(feed[0].videoId, 'fallback-1');
+  assert.deepEqual(calls, ['UC-fallback']);
+
+  const empty = await getChannelFeed('UC-empty', {
+    fetchImpl: async () => new Response('', { status: 404 }),
+    ytDlpFeedImpl: async () => [],
+  });
+  assert.deepEqual(empty, []);
+
+  const noVideosTab = await getChannelFeedWithYtDlp('UC-empty-tab', {
+    execFileImpl: async () => { throw Object.assign(new Error('yt-dlp exit 1'), { stderr: 'This channel does not have a videos tab' }); },
+  });
+  assert.deepEqual(noVideosTab, []);
 });
 
 test('bannière Hermes: un chemin conteneur est résolu uniquement dans le cache autorisé', async () => {
@@ -196,6 +224,31 @@ test('cycle vidéo: une panne est isolée et reçoit un délai de reprise', asyn
   assert.equal(event.status, 'retryable-failure');
   assert.ok(Date.parse(event.nextRetryAt) > Date.now());
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:investissement:broken-1'), false);
+});
+
+test('file éditoriale: même source ou titre voisin est bloqué sur un même média, sans bloquer un autre média', () => {
+  const candidate = {
+    title: 'Google actualise son SEO Starter Guide avec un cap débutant',
+    primaryUrl: 'https://developers.google.com/search/docs/fundamentals/seo-starter-guide?utm_source=test',
+  };
+  const drafts = [{
+    mediaSlug: 'affiliation', contentType: 'news', title: 'Google actualise son SEO Starter Guide avec un cap débutant',
+    sourceUrls: ['https://developers.google.com/search/docs/fundamentals/seo-starter-guide'],
+  }];
+  assert.equal(findDraftConflict(candidate, drafts, { mediaSlug: 'affiliation', contentType: 'news' }).reason, 'same-source-url');
+  assert.equal(findDraftConflict(candidate, drafts, { mediaSlug: 'logiciels', contentType: 'news' }), null);
+  assert.equal(findInternalLinkConflict(candidate, [{ anchor: 'Google actualise son SEO Starter Guide avec un cap débutant', path: '/actualites/google-seo-starter-guide/' }]).path, '/actualites/google-seo-starter-guide/');
+});
+
+test('curation: les brouillons historiques restent récupérables mais les doublons sont quarantainés', () => {
+  const report = curateDraftQueue([
+    { path: '/drafts/old.json', draft: { mediaSlug: 'logiciels', contentType: 'news', title: 'Cloudflare annonce un modèle pour les agents IA', sourceUrls: ['https://blog.cloudflare.com/agent-access'], qa: { passed: true }, generatedAt: '2026-08-05T10:00:00Z' } },
+    { path: '/drafts/new.json', draft: { mediaSlug: 'logiciels', contentType: 'news', title: 'Cloudflare annonce un modèle pour les agents IA', sourceUrls: ['https://blog.cloudflare.com/agent-access'], qa: { passed: true }, generatedAt: '2026-08-06T10:00:00Z' } },
+  ]);
+  assert.equal(report.quarantined, 1);
+  assert.equal(report.retained, 1);
+  assert.equal(report.decisions.find((entry) => entry.path === '/drafts/new.json').status, 'review-required');
+  assert.equal(report.decisions.find((entry) => entry.path === '/drafts/old.json').status, 'quarantined');
 });
 
 test('collecteur page: ETag, changement et santé sans confondre échec et absence', async () => {
@@ -662,6 +715,16 @@ test('publication VPS: URL, période d’observation, autorisation et push sont 
   });
   const allowedResult = await allowed.publishDraftPath(path, { dryRun: true });
   assert.equal(allowedResult.allowed, true);
+
+  const automaticQueue = await allowed.run({ dryRun: true });
+  assert.equal(automaticQueue.results.length, 0);
+  store.saveDraft('logiciels', {
+    ...draft,
+    candidateId: 'publication-eligible',
+    publicationEligibility: { status: 'eligible', checkedAt: new Date().toISOString(), reason: null },
+  });
+  const eligibleQueue = await allowed.run({ dryRun: true });
+  assert.equal(eligibleQueue.results.length, 1);
 });
 
 test('supervision: un état jamais observé crée une seule alerte explicite par jour', () => {
@@ -725,11 +788,31 @@ test('préflight: ChatGPT, topics et dépôts sont requis, xAI reste un enrichis
     },
     topicStatePath,
     siteConfigs,
+    runtimeHealth: { status: 'healthy', blockers: [] },
     env: { MEDIA_ENGINE_PUBLICATION_MODE: 'draft' },
   });
   assert.equal(ready.readyForShadow, true);
   assert.equal(ready.readyForFullResearch, true);
   assert.equal(ready.readyForPublishing, false);
+
+  const unhealthyPublishing = await runPreflight({
+    hermes: {
+      authList: async () => ({ raw: 'xai-oauth\nopenai-codex', providers: ['xai-oauth', 'openai-codex'] }),
+      toolList: async () => '✓ enabled  image_gen  Image Generation',
+      configGet: async () => 'gpt-image-2',
+    },
+    topicStatePath,
+    siteConfigs,
+    runtimeHealth: { status: 'degraded', blockers: ['last-video-run-degraded'] },
+    env: {
+      MEDIA_ENGINE_PUBLICATION_MODE: 'automatic',
+      MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED: 'true',
+      MEDIA_ENGINE_PUSH_ENABLED: 'true',
+      MEDIA_ENGINE_SHADOW_STARTED_AT: '2026-07-01T00:00:00.000Z',
+    },
+  });
+  assert.equal(unhealthyPublishing.readyForPublishing, false);
+  assert.equal(unhealthyPublishing.publishingChecks.find((entry) => entry.id === 'runtime-health').passed, false);
 
   const blocked = await runPreflight({
     hermes: {

@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { MediaEngine } from '../media/engine.mjs';
+import { applyDraftCuration, curateDraftQueue } from '../media/draft-curation.mjs';
 import { loadSiteConfigs, PublicationWorker } from '../media/publication-worker.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { registrySnapshot, validateRegistry } from '../media/registry.mjs';
@@ -25,6 +26,7 @@ function offersFromPayload(payload) {
 
 const command = process.argv[2] || 'validate';
 const dryRun = process.argv.includes('--dry-run');
+const apply = process.argv.includes('--apply');
 const mediaSlug = argument('--media');
 const jsonOutput = process.argv.includes('--json');
 const offers = offersFromPayload(readJson(process.env.MEDIA_ENGINE_OFFERS_PATH, []));
@@ -44,7 +46,7 @@ try {
     output({ valid: errors.length === 0, errors, registry: registrySnapshot() });
     if (errors.length) process.exitCode = 1;
   } else if (command === 'preflight') {
-    result = await runPreflight({ hermes: engine.hermes });
+    result = await runPreflight({ hermes: engine.hermes, runtimeHealth: engine.healthReport() });
     output(result);
     if (!result.readyForShadow) process.exitCode = 1;
   } else if (command === 'collect') {
@@ -70,6 +72,12 @@ try {
   } else if (command === 'guide') {
     result = await engine.runGuideCycle({ mediaSlug, opportunities: guideOpportunities, dryRun });
     output(result);
+  } else if (command === 'curate') {
+    const entries = engine.store.listDrafts(mediaSlug);
+    result = curateDraftQueue(entries, internalLinks);
+    if (apply) applyDraftCuration(entries, result);
+    result = { ...result, applied: apply };
+    output(result);
   } else if (command === 'publish') {
     const worker = new PublicationWorker({ store: engine.store, siteConfigs: loadSiteConfigs() });
     const draftPath = argument('--draft');
@@ -80,10 +88,10 @@ try {
     result = await engine.runCycle({ mediaSlug, dryRun });
     output(result);
   } else {
-    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|publish|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--json]');
+    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
     process.exitCode = 2;
   }
-  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'publish', 'run'].includes(command)) {
+  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'run'].includes(command)) {
     engine.store.initialize();
     const failedEntries = command === 'video' && Array.isArray(result)
       ? result.filter((entry) => entry?.failed)

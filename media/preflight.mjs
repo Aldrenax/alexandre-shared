@@ -25,6 +25,7 @@ function elapsedDays(value, now = new Date()) {
 export async function runPreflight({
   hermes,
   env = process.env,
+  runtimeHealth = null,
   topicStatePath = env.HERMES_TELEGRAM_TOPIC_STATE_PATH || '/var/lib/hermes-agent/telegram-cockpit/state.json',
   siteConfigs = null,
 } = {}) {
@@ -74,6 +75,11 @@ export async function runPreflight({
     check('xai-oauth', hasXai, hasXai ? 'présent' : 'absent, RSS et sources officielles restent disponibles'),
   ];
   const publishingChecks = [
+    check(
+      'runtime-health',
+      runtimeHealth?.status === 'healthy',
+      runtimeHealth ? { status: runtimeHealth.status, blockers: runtimeHealth.blockers || [] } : 'absent',
+    ),
     check('automatic-publication-approved', enabled(env.MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED), env.MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED || 'false'),
     check('git-push-enabled', enabled(env.MEDIA_ENGINE_PUSH_ENABLED), env.MEDIA_ENGINE_PUSH_ENABLED || 'false'),
     check(

@@ -131,6 +131,12 @@ export class MediaStateStore {
     }).sort();
   }
 
+  listDrafts(mediaSlug = null) {
+    return this.listDraftPaths(mediaSlug)
+      .map((path) => ({ path, draft: readJson(path, null) }))
+      .filter((entry) => entry.draft && typeof entry.draft === 'object');
+  }
+
   acquireLease(name, { ttlMs = 30 * 60_000, now = Date.now() } = {}) {
     this.initialize();
     const lockPath = join(this.locksDir, `${name}.lock`);

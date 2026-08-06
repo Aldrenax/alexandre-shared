@@ -223,10 +223,18 @@ export class PublicationWorker {
   async run({ mediaSlug = null, dryRun = false, limit = 1 } = {}) {
     const paths = this.store.listDraftPaths(mediaSlug);
     const results = [];
-    for (const path of paths) {
+    const queue = paths
+      .map((path) => ({ path, draft: readJson(path, null) }))
+      .filter((entry) => entry.draft)
+      .sort((left, right) => {
+        const leftAt = Date.parse(left.draft.scheduledPublishAt || left.draft.generatedAt || 0) || 0;
+        const rightAt = Date.parse(right.draft.scheduledPublishAt || right.draft.generatedAt || 0) || 0;
+        return leftAt - rightAt || left.path.localeCompare(right.path);
+      });
+    for (const { path, draft } of queue) {
       if (results.length >= limit) break;
-      const draft = readJson(path, null);
       if (!draft?.qa?.passed) continue;
+      if (draft?.publicationEligibility?.status !== 'eligible') continue;
       if (this.store.hasEvent(`published:${draft.mediaSlug}:${draft.contentType}:${draft.slug}`)) continue;
       results.push(await this.publishDraftPath(path, { dryRun }));
     }
