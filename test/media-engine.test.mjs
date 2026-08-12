@@ -1137,6 +1137,12 @@ test('supervision: un état jamais observé crée une seule alerte explicite par
   assert.equal(readdirSync(eventsDirectory).length, 1);
 });
 
+test('supervision: le rapport expose le mode de publication réel', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-health-publication-mode-')));
+  const engine = new MediaEngine({ store, env: { MEDIA_ENGINE_PUBLICATION_MODE: 'automatic' } });
+  assert.equal(engine.healthReport().publicationMode, 'automatic');
+});
+
 test('supervision: un échec vidéo ou un OOM systemd interdit le statut healthy', () => {
   const root = mkdtempSync(join(tmpdir(), 'media-monitor-video-'));
   const store = new MediaStateStore(root);

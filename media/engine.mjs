@@ -946,7 +946,7 @@ export class MediaEngine {
         qaFailed,
         editorialBlocked,
       },
-      publicationMode: 'draft',
+      publicationMode: this.env.MEDIA_ENGINE_PUBLICATION_MODE || 'draft',
       freshness: {
         sourceHealthAgeHours: sourceAgeHours,
         networkRunAgeHours: networkAgeHours,
