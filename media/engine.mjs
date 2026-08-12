@@ -52,6 +52,15 @@ function positiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function plausibleVideoDate(value, now = Date.now()) {
+  const date = value instanceof Date ? value : new Date(value || '');
+  return Number.isFinite(date.getTime())
+    && date.getTime() >= Date.parse('2005-02-14T00:00:00.000Z')
+    && date.getTime() <= now + 24 * 3_600_000
+    ? date
+    : null;
+}
+
 function xSearchPolicy(env = process.env) {
   return {
     enabled: String(env.MEDIA_ENGINE_X_SEARCH_ENABLED || 'true').toLowerCase() !== 'false',
@@ -264,6 +273,7 @@ export class MediaEngine {
     internalLinks = {},
     getChannelFeedImpl = getChannelFeed,
     getVideoInfoImpl = getVideoInfo,
+    env = process.env,
   } = {}) {
     this.store = store;
     this.hermes = hermes;
@@ -272,6 +282,7 @@ export class MediaEngine {
     this.internalLinks = internalLinks;
     this.getChannelFeed = getChannelFeedImpl;
     this.getVideoInfo = getVideoInfoImpl;
+    this.env = env;
   }
 
   validate() {
@@ -461,6 +472,7 @@ export class MediaEngine {
     video = null,
     dryRun = false,
     generateBanner = true,
+    publicationEligibility = null,
   } = {}) {
     const media = mediaBySlug(candidate.mediaSlug);
     if (!media?.editorialEnabled) throw new Error(`Média non actif: ${candidate.mediaSlug}`);
@@ -528,9 +540,9 @@ export class MediaEngine {
       ...draft,
       qa,
       publicationEligibility: {
-        status: qa.passed ? 'eligible' : 'blocked',
+        status: qa.passed ? publicationEligibility?.status || 'eligible' : 'blocked',
         checkedAt: new Date().toISOString(),
-        reason: qa.passed ? null : 'qa-failed',
+        reason: qa.passed ? publicationEligibility?.reason || null : 'qa-failed',
       },
     };
     const draftPath = this.store.saveDraft(media.slug, draft);
@@ -612,13 +624,30 @@ export class MediaEngine {
           results.push({ mediaSlug: media.slug, planned: true, video: unseen, ignoredShorts: shortsFromFeed.length });
           continue;
         }
+        const eventKey = `video-draft:${media.slug}:${unseen.videoId}`;
+        const lookbackDays = positiveInteger(this.env.MEDIA_ENGINE_VIDEO_LOOKBACK_DAYS, 7);
+        const feedPublishedAt = plausibleVideoDate(unseen.pubDate);
+        if (feedPublishedAt && feedPublishedAt.getTime() < Date.now() - lookbackDays * 86_400_000) {
+          this.store.markEvent(eventKey, {
+            status: 'historical-video-skipped',
+            reason: `published-before-${lookbackDays}-day-lookback`,
+            publishedAt: feedPublishedAt.toISOString(),
+          });
+          results.push({
+            mediaSlug: media.slug,
+            videoId: unseen.videoId,
+            skipped: true,
+            reason: 'historical-video-outside-lookback',
+            publishedAt: feedPublishedAt.toISOString(),
+          });
+          continue;
+        }
         const info = await this.getVideoInfo(unseen.videoId);
         if (info.isShort || info.isLive) {
           this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, { status: 'ignored-short-or-live' });
           results.push({ mediaSlug: media.slug, skipped: true, reason: 'short-or-live', videoId: unseen.videoId });
           continue;
         }
-        const eventKey = `video-draft:${media.slug}:${unseen.videoId}`;
         const previousEvent = this.store.getEvent(eventKey);
         const captionRequestPath = join(this.store.queueDir, 'caption-requests', `${unseen.videoId}.json`);
         const existingCaptionRequest = readJson(captionRequestPath, null);
@@ -649,7 +678,7 @@ export class MediaEngine {
           results.push({
             mediaSlug: media.slug,
             videoId: unseen.videoId,
-            failed: true,
+            retryScheduled: true,
             reason: 'transcript-incomplete-caption-requested',
           });
           continue;
@@ -673,7 +702,23 @@ export class MediaEngine {
             reason: 'transcript-unavailable-caption-requested',
             nextRetryAt: retryAt(6),
           });
-          results.push({ mediaSlug: media.slug, failed: true, reason: 'transcript-unavailable-caption-requested', videoId: unseen.videoId });
+          results.push({ mediaSlug: media.slug, retryScheduled: true, reason: 'transcript-unavailable-caption-requested', videoId: unseen.videoId });
+          continue;
+        }
+        const plausiblePublishedAt = plausibleVideoDate(info.publishedAt) || feedPublishedAt;
+        if (plausiblePublishedAt && plausiblePublishedAt.getTime() < Date.now() - lookbackDays * 86_400_000) {
+          this.store.markEvent(eventKey, {
+            status: 'historical-video-skipped',
+            reason: `published-before-${lookbackDays}-day-lookback`,
+            publishedAt: plausiblePublishedAt.toISOString(),
+          });
+          results.push({
+            mediaSlug: media.slug,
+            videoId: unseen.videoId,
+            skipped: true,
+            reason: 'historical-video-outside-lookback',
+            publishedAt: plausiblePublishedAt.toISOString(),
+          });
           continue;
         }
         const thumbnailPath = join(this.store.assetsDir, media.slug, `${unseen.videoId}-youtube.jpg`);
@@ -687,7 +732,7 @@ export class MediaEngine {
         id: `youtube-${unseen.videoId}`,
         title: info.title || unseen.title,
         primaryUrl: `https://www.youtube.com/watch?v=${unseen.videoId}`,
-        publishedAt: info.publishedAt?.toISOString?.() || unseen.pubDate?.toISOString?.() || null,
+        publishedAt: plausiblePublishedAt?.toISOString() || null,
         media: [media.slug],
         mediaSlug: media.slug,
         score: 100,
@@ -732,7 +777,15 @@ export class MediaEngine {
         thumbnailWidth: thumbnail.width,
         thumbnailHeight: thumbnail.height,
         };
-        const draft = await this.generateDraft(candidate, { contentType: 'video', video, generateBanner: false });
+        const draft = await this.generateDraft(candidate, {
+          contentType: 'video',
+          video,
+          generateBanner: false,
+          publicationEligibility: plausiblePublishedAt ? null : {
+            status: 'review-required',
+            reason: 'video-published-at-unverified',
+          },
+        });
         let receipt = videoDraftReceipt(draft, candidate.id);
         if (receipt.status === 'editorial-blocked' && transcriptBlockNeedsCaption(receipt.reason)) {
           const request = readJson(captionRequestPath, null);
@@ -763,7 +816,7 @@ export class MediaEngine {
           mediaSlug: media.slug,
           videoId: unseen.videoId,
           draft,
-          ...(receipt.status === 'retryable-failure' ? { failed: true, reason: receipt.reason } : {}),
+          ...(receipt.status === 'retryable-failure' ? { retryScheduled: true, reason: receipt.reason } : {}),
         });
       } catch (error) {
         const message = String(error?.message || error);
@@ -774,7 +827,7 @@ export class MediaEngine {
             nextRetryAt: retryAt(2),
           });
         }
-        results.push({ mediaSlug: media.slug, videoId: unseen?.videoId || null, failed: true, error: message });
+        results.push({ mediaSlug: media.slug, videoId: unseen?.videoId || null, retryScheduled: true, error: message });
       }
     }
     return results;
@@ -856,6 +909,7 @@ export class MediaEngine {
     if (networkAgeHours != null && networkAgeHours > 3) blockers.push('network-run-stale');
     if (videoRun?.status === 'failed') blockers.push('last-video-run-failed');
     if (videoRun?.status === 'degraded') blockers.push('last-video-run-degraded');
+    if (videoRun?.status === 'warning') warnings.push('last-video-run-warning');
     if (videoAgeHours != null && videoAgeHours > 3) blockers.push('video-run-stale');
     if (videoUnit && videoUnit.result !== 'success') blockers.push(`video-service-${videoUnit.result || 'failed'}`);
     if (retryableReady > 0) blockers.push('video-retryable-failures-ready');

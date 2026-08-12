@@ -13,6 +13,11 @@ import { registrySnapshot, validateRegistry } from '../media/registry.mjs';
 // pour le compteur shadow, sans dupliquer les valeurs dans plusieurs fichiers.
 loadEnvironmentFile(process.env.MEDIA_ENGINE_ENV_FILE || '/etc/alexandre-media-engine/media-engine.env');
 loadEnvironmentFile(process.env.MEDIA_ENGINE_SHADOW_ENV_FILE || '/etc/alexandre-media-engine/shadow.env');
+loadEnvironmentFile(
+  process.env.MEDIA_ENGINE_PUBLICATION_ENV_FILE || '/etc/alexandre-media-engine/publication.env',
+  process.env,
+  { override: true },
+);
 
 function argument(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -81,7 +86,10 @@ try {
     output(result);
   } else if (command === 'curate') {
     const entries = engine.store.listDrafts(mediaSlug);
-    result = curateDraftQueue(entries, internalLinks);
+    result = curateDraftQueue(entries, internalLinks, {
+      automaticCutoverAt: argument('--cutover-at'),
+      newsMaxAgeHours: Number(argument('--news-max-age-hours', process.env.MEDIA_ENGINE_NEWS_MAX_AGE_HOURS || '72')),
+    });
     if (apply) applyDraftCuration(entries, result);
     result = { ...result, applied: apply };
     output(result);
@@ -103,12 +111,18 @@ try {
     const failedEntries = command === 'video' && Array.isArray(result)
       ? result.filter((entry) => entry?.failed)
       : [];
-    const status = failedEntries.length ? 'degraded' : 'success';
+    const scheduledRetries = command === 'video' && Array.isArray(result)
+      ? result.filter((entry) => entry?.retryScheduled)
+      : [];
+    const status = failedEntries.length ? 'degraded' : scheduledRetries.length ? 'warning' : 'success';
     engine.store.recordRun(command, {
       status,
       mediaSlug: mediaSlug || null,
       ...(failedEntries.length ? {
         failures: failedEntries.map((entry) => ({ mediaSlug: entry.mediaSlug, videoId: entry.videoId, error: entry.error || entry.reason })),
+      } : {}),
+      ...(scheduledRetries.length ? {
+        scheduledRetries: scheduledRetries.map((entry) => ({ mediaSlug: entry.mediaSlug, videoId: entry.videoId, reason: entry.error || entry.reason })),
       } : {}),
     });
     if (failedEntries.length) process.exitCode = 1;

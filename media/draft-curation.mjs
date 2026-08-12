@@ -18,7 +18,11 @@ function candidateFromDraft(draft) {
  * sur disque avec un statut explicite, ce qui permet une restauration manuelle
  * et empêche tout passage accidentel dans le worker de publication.
  */
-export function curateDraftQueue(entries = [], internalLinks = {}, { now = new Date() } = {}) {
+export function curateDraftQueue(entries = [], internalLinks = {}, {
+  now = new Date(),
+  automaticCutoverAt = null,
+  newsMaxAgeHours = 72,
+} = {}) {
   const retained = [];
   const decisions = [];
   const sorted = [...entries].sort((left, right) => timestamp(right.draft) - timestamp(left.draft));
@@ -43,10 +47,27 @@ export function curateDraftQueue(entries = [], internalLinks = {}, { now = new D
       continue;
     }
     retained.push(entry);
+    const cutoverTime = Date.parse(automaticCutoverAt || '');
+    const generatedTime = Date.parse(draft.generatedAt || '');
+    const newsAgeHours = Number.isFinite(generatedTime) ? (now.getTime() - generatedTime) / 3_600_000 : null;
+    const heldHistoricalVideo = draft.publicationEligibility?.status === 'eligible'
+      && draft.contentType === 'video'
+      && Number.isFinite(cutoverTime)
+      && (!Number.isFinite(generatedTime) || generatedTime < cutoverTime);
+    const heldStaleNews = draft.publicationEligibility?.status === 'eligible'
+      && draft.contentType === 'news'
+      && newsAgeHours != null
+      && newsAgeHours > newsMaxAgeHours;
     decisions.push({
       ...base,
-      status: draft.publicationEligibility?.status || 'review-required',
-      reason: draft.publicationEligibility?.reason || 'legacy-shadow-draft',
+      status: heldHistoricalVideo || heldStaleNews
+        ? 'review-required'
+        : draft.publicationEligibility?.status || 'review-required',
+      reason: heldHistoricalVideo
+        ? 'historical-video-before-automatic-cutover'
+        : heldStaleNews
+          ? `stale-news-over-${newsMaxAgeHours}-hours`
+          : draft.publicationEligibility?.reason || 'legacy-shadow-draft',
     });
   }
   return {

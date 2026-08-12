@@ -42,6 +42,22 @@ function boolean(value) {
   return /^(?:1|true|yes)$/i.test(String(value || ''));
 }
 
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function dayKey(value, timeZone = 'Europe/Paris') {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value instanceof Date ? value : new Date(value));
+  const field = (type) => parts.find((part) => part.type === type)?.value;
+  return `${field('year')}-${field('month')}-${field('day')}`;
+}
+
 function shadowDays(startedAt, now = new Date()) {
   const start = Date.parse(startedAt || '');
   return Number.isFinite(start) ? Math.max(0, Math.floor((now.getTime() - start) / 86_400_000)) : 0;
@@ -101,9 +117,50 @@ export class PublicationWorker {
       now: this.now(),
     });
     if (!boolean(this.env.MEDIA_ENGINE_PUSH_ENABLED)) decision.blockers.push('git-push-disabled');
+    const cutoverAt = Date.parse(this.env.MEDIA_ENGINE_AUTOMATIC_CUTOVER_AT || '');
+    const generatedAt = Date.parse(draft.generatedAt || '');
+    if (draft.contentType === 'video'
+      && Number.isFinite(cutoverAt)
+      && (!Number.isFinite(generatedAt) || generatedAt < cutoverAt)) {
+      decision.blockers.push('historical-video-before-automatic-cutover');
+    }
+    const newsMaxAgeHours = positiveInteger(this.env.MEDIA_ENGINE_NEWS_MAX_AGE_HOURS, 72);
+    if (draft.contentType === 'news'
+      && Number.isFinite(generatedAt)
+      && this.now().getTime() - generatedAt > newsMaxAgeHours * 3_600_000) {
+      decision.blockers.push(`stale-news-over-${newsMaxAgeHours}-hours`);
+    }
     decision.allowed = decision.blockers.length === 0;
     decision.action = decision.allowed ? 'publish' : 'keep-draft';
     return decision;
+  }
+
+  publicationReceipts() {
+    const events = this.store.read('events', { events: {} }).events || {};
+    return Object.entries(events)
+      .filter(([key, receipt]) => key.startsWith('published:') && receipt?.publishedAt)
+      .map(([, receipt]) => receipt)
+      .filter((receipt) => Number.isFinite(Date.parse(receipt.publishedAt)));
+  }
+
+  queueBlockersFor(draft, receipts = this.publicationReceipts()) {
+    const blockers = [];
+    const now = this.now();
+    const today = dayKey(now);
+    const todayReceipts = receipts.filter((receipt) => dayKey(receipt.publishedAt) === today);
+    const dailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT, 6);
+    const perMediaLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT, 1);
+    const minIntervalMinutes = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES, 90);
+    if (todayReceipts.length >= dailyLimit) blockers.push(`network-daily-limit-${dailyLimit}`);
+    if (todayReceipts.filter((receipt) => receipt.mediaSlug === draft.mediaSlug).length >= perMediaLimit) {
+      blockers.push(`media-daily-limit-${draft.mediaSlug}-${perMediaLimit}`);
+    }
+    const lastPublishedAt = receipts.reduce((latest, receipt) => Math.max(latest, Date.parse(receipt.publishedAt) || 0), 0);
+    const nextAllowedAt = lastPublishedAt + minIntervalMinutes * 60_000;
+    if (lastPublishedAt && nextAllowedAt > now.getTime()) {
+      blockers.push(`network-cooldown-until-${new Date(nextAllowedAt).toISOString()}`);
+    }
+    return blockers;
   }
 
   async verifyLive(url, title, { attempts = 12, intervalMs = 15_000 } = {}) {
@@ -223,6 +280,8 @@ export class PublicationWorker {
   async run({ mediaSlug = null, dryRun = false, limit = 1 } = {}) {
     const paths = this.store.listDraftPaths(mediaSlug);
     const results = [];
+    const held = [];
+    const receipts = this.publicationReceipts();
     const queue = paths
       .map((path) => ({ path, draft: readJson(path, null) }))
       .filter((entry) => entry.draft)
@@ -236,9 +295,17 @@ export class PublicationWorker {
       if (!draft?.qa?.passed) continue;
       if (draft?.publicationEligibility?.status !== 'eligible') continue;
       if (this.store.hasEvent(`published:${draft.mediaSlug}:${draft.contentType}:${draft.slug}`)) continue;
-      results.push(await this.publishDraftPath(path, { dryRun }));
+      const decision = this.decisionFor(draft);
+      const blockers = [...decision.blockers, ...this.queueBlockersFor(draft, receipts)];
+      if (blockers.length) {
+        held.push({ draftPath: path, mediaSlug: draft.mediaSlug, contentType: draft.contentType, blockers });
+        continue;
+      }
+      const published = await this.publishDraftPath(path, { dryRun });
+      results.push(published);
+      if (!dryRun && published?.publishedAt) receipts.push(published);
     }
-    return { inspected: paths.length, results };
+    return { inspected: paths.length, heldCount: held.length, held: held.slice(0, 25), results };
   }
 }
 

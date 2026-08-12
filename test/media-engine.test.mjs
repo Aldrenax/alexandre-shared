@@ -44,7 +44,7 @@ import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
 import {
   readCachedTranscript, runYtDlpWithRetries, stickyProxyUrl, writeCachedTranscript, ytDlpNetworkEnv,
 } from '../lib/whisper.mjs';
-import { getChannelFeed, getChannelFeedWithYtDlp, resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
+import { extractPublishedAt, getChannelFeed, getChannelFeedWithYtDlp, resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
   assert.deepEqual(validateRegistry(), []);
@@ -69,6 +69,25 @@ test('environnement: le fichier shadow remplace une variable principale vide', (
   loadEnvironmentFile(shadow, env);
   assert.equal(env.MEDIA_ENGINE_SHADOW_STARTED_AT, '2026-08-05T14:15:56Z');
   assert.equal(env.MEDIA_ENGINE_PUBLICATION_MODE, 'draft');
+});
+
+test('environnement: le fichier publication remplace explicitement les garde-fous shadow', () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-env-publication-'));
+  const publication = join(root, 'publication.env');
+  writeFileSync(publication, 'MEDIA_ENGINE_PUBLICATION_MODE=automatic\nMEDIA_ENGINE_PUSH_ENABLED=true\n');
+  const env = { MEDIA_ENGINE_PUBLICATION_MODE: 'draft', MEDIA_ENGINE_PUSH_ENABLED: 'false' };
+  loadEnvironmentFile(publication, env, { override: true });
+  assert.equal(env.MEDIA_ENGINE_PUBLICATION_MODE, 'automatic');
+  assert.equal(env.MEDIA_ENGINE_PUSH_ENABLED, 'true');
+});
+
+test('métadonnées YouTube: une date 1970 est rejetée au profit d’une date relative plausible', () => {
+  const published = extractPublishedAt(
+    { primary_info: { published: { text: 'il y a 2 jours' } } },
+    { publish_date: '1970-01-01T00:00:00.000Z' },
+  );
+  assert.ok(published instanceof Date);
+  assert.ok(published.getTime() > Date.parse('2020-01-01T00:00:00.000Z'));
 });
 
 test('santé: une source officielle complémentaire indisponible ne bloque pas le réseau', () => {
@@ -286,12 +305,32 @@ test('cycle vidéo: une panne est isolée et reçoit un délai de reprise', asyn
     getVideoInfoImpl: async () => { throw new Error('504 Gateway Timeout'); },
   });
   const result = await engine.runVideoCycle({ mediaSlug: 'investissement' });
-  assert.equal(result[0].failed, true);
+  assert.equal(result[0].retryScheduled, true);
   assert.match(result[0].error, /504/);
   const event = store.getEvent('video-draft:investissement:broken-1');
   assert.equal(event.status, 'retryable-failure');
   assert.ok(Date.parse(event.nextRetryAt) > Date.now());
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:investissement:broken-1'), false);
+});
+
+test('cycle vidéo: une vidéo historique RSS est classée sans transcription coûteuse', async () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-historical-')));
+  let infoCalls = 0;
+  const engine = new MediaEngine({
+    store,
+    env: { MEDIA_ENGINE_VIDEO_LOOKBACK_DAYS: '7' },
+    getChannelFeedImpl: async () => [{
+      videoId: 'historical-1',
+      link: 'https://www.youtube.com/watch?v=historical-1',
+      title: 'Ancienne vidéo',
+      pubDate: new Date(Date.now() - 30 * 86_400_000),
+    }],
+    getVideoInfoImpl: async () => { infoCalls += 1; return {}; },
+  });
+  const result = await engine.runVideoCycle({ mediaSlug: 'chaimbault' });
+  assert.equal(result[0].reason, 'historical-video-outside-lookback');
+  assert.equal(infoCalls, 0);
+  assert.equal(store.getEvent('video-draft:chaimbault:historical-1').status, 'historical-video-skipped');
 });
 
 test('cycle vidéo: une reprise persistée survit à la disparition de la vidéo du RSS', async () => {
@@ -352,6 +391,18 @@ test('curation: les brouillons historiques restent récupérables mais les doubl
   assert.equal(report.retained, 1);
   assert.equal(report.decisions.find((entry) => entry.path === '/drafts/new.json').status, 'review-required');
   assert.equal(report.decisions.find((entry) => entry.path === '/drafts/old.json').status, 'quarantined');
+});
+
+test('curation de bascule: vidéos pré-cutover et actualités périmées exigent une revue', () => {
+  const now = new Date('2026-08-12T14:20:00.000Z');
+  const report = curateDraftQueue([
+    { path: '/drafts/video.json', draft: { mediaSlug: 'chaimbault', contentType: 'video', title: 'Vidéo historique', sourceUrls: ['https://youtube.com/watch?v=1'], qa: { passed: true }, generatedAt: '2026-08-12T12:00:00.000Z', publicationEligibility: { status: 'eligible' } } },
+    { path: '/drafts/news.json', draft: { mediaSlug: 'logiciels', contentType: 'news', title: 'Actualité ancienne', sourceUrls: ['https://example.com/news'], qa: { passed: true }, generatedAt: '2026-08-08T12:00:00.000Z', publicationEligibility: { status: 'eligible' } } },
+    { path: '/drafts/guide.json', draft: { mediaSlug: 'entreprise', contentType: 'guide', title: 'Guide durable', sourceUrls: ['https://example.com/guide'], qa: { passed: true }, generatedAt: '2026-08-06T12:00:00.000Z', publicationEligibility: { status: 'eligible' } } },
+  ], {}, { now, automaticCutoverAt: '2026-08-12T14:15:56.000Z', newsMaxAgeHours: 72 });
+  assert.equal(report.decisions.find((entry) => entry.path.endsWith('video.json')).status, 'review-required');
+  assert.equal(report.decisions.find((entry) => entry.path.endsWith('news.json')).status, 'review-required');
+  assert.equal(report.decisions.find((entry) => entry.path.endsWith('guide.json')).status, 'eligible');
 });
 
 test('collecteur page: ETag, changement et santé sans confondre échec et absence', async () => {
@@ -931,6 +982,66 @@ test('publication VPS: URL, période d’observation, autorisation et push sont 
   assert.equal(eligibleQueue.results.length, 1);
 });
 
+test('publication automatique: la bascule ignore l’historique et impose un rythme réseau', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-publication-cutover-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const common = {
+    publicationMode: 'draft',
+    qa: { passed: true },
+    publicationEligibility: { status: 'eligible' },
+  };
+  store.saveDraft('chaimbault', {
+    ...common,
+    candidateId: 'old-video',
+    mediaSlug: 'chaimbault',
+    contentType: 'video',
+    slug: 'ancienne-video',
+    title: 'Ancienne vidéo',
+    generatedAt: '2026-08-10T08:00:00.000Z',
+    scheduledPublishAt: '2026-08-10T09:00:00.000Z',
+  });
+  store.saveDraft('entreprise', {
+    ...common,
+    candidateId: 'evergreen-guide',
+    mediaSlug: 'entreprise',
+    contentType: 'guide',
+    slug: 'guide-durable',
+    title: 'Guide durable',
+    generatedAt: '2026-08-10T10:00:00.000Z',
+    scheduledPublishAt: '2026-08-10T11:00:00.000Z',
+  });
+  const now = new Date('2026-08-12T16:20:00.000Z');
+  const worker = new PublicationWorker({
+    store,
+    siteConfigs: siteConfigsFromPayload({
+      entreprise: { repository: 'git@github.com:Aldrenax/alexandre-entreprise.git', branch: 'main' },
+    }),
+    env: {
+      MEDIA_ENGINE_PUBLICATION_MODE: 'automatic',
+      MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED: 'true',
+      MEDIA_ENGINE_PUSH_ENABLED: 'true',
+      MEDIA_ENGINE_SHADOW_STARTED_AT: '2026-08-01T00:00:00.000Z',
+      MEDIA_ENGINE_AUTOMATIC_CUTOVER_AT: '2026-08-12T14:15:56.000Z',
+      MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES: '90',
+    },
+    now: () => now,
+  });
+  const first = await worker.run({ dryRun: true });
+  assert.equal(first.results.length, 1);
+  assert.match(first.results[0].publicUrl, /alexandre-entreprise\.fr\/guides\/guide-durable/);
+  assert.ok(first.held.some((entry) => entry.blockers.includes('historical-video-before-automatic-cutover')));
+
+  store.markEvent('published:logiciels:news:recent', {
+    status: 'published',
+    mediaSlug: 'logiciels',
+    publishedAt: new Date(now.getTime() - 30 * 60_000).toISOString(),
+  });
+  const throttled = await worker.run({ dryRun: true });
+  assert.equal(throttled.results.length, 0);
+  assert.ok(throttled.held.some((entry) => entry.blockers.some((blocker) => blocker.startsWith('network-cooldown-until-'))));
+});
+
 test('supervision: un état jamais observé crée une seule alerte explicite par jour', () => {
   const root = mkdtempSync(join(tmpdir(), 'media-monitor-'));
   const store = new MediaStateStore(root);
@@ -1051,6 +1162,24 @@ test('préflight: ChatGPT, topics et dépôts sont requis, xAI reste un enrichis
   });
   assert.equal(unhealthyPublishing.readyForPublishing, false);
   assert.equal(unhealthyPublishing.publishingChecks.find((entry) => entry.id === 'runtime-health').passed, false);
+
+  const warningPublishing = await runPreflight({
+    hermes: {
+      authList: async () => ({ raw: 'xai-oauth\nopenai-codex', providers: ['xai-oauth', 'openai-codex'] }),
+      toolList: async () => '✓ enabled  image_gen  Image Generation',
+      configGet: async () => 'gpt-image-2',
+    },
+    topicStatePath,
+    siteConfigs,
+    runtimeHealth: { status: 'degraded', blockers: [], warnings: ['video-retries-scheduled'] },
+    env: {
+      MEDIA_ENGINE_PUBLICATION_MODE: 'automatic',
+      MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED: 'true',
+      MEDIA_ENGINE_PUSH_ENABLED: 'true',
+      MEDIA_ENGINE_SHADOW_STARTED_AT: '2026-07-01T00:00:00.000Z',
+    },
+  });
+  assert.equal(warningPublishing.readyForPublishing, true);
 
   const blocked = await runPreflight({
     hermes: {

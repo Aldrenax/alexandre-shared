@@ -53,6 +53,10 @@ export async function runPreflight({
   const editorialProvider = env.HERMES_EDITORIAL_PROVIDER || DEFAULT_EDITORIAL_PROVIDER;
   const editorialModel = env.HERMES_EDITORIAL_MODEL || DEFAULT_EDITORIAL_MODEL;
   const hasOpenAiCodex = auth.providers.includes('openai-codex') || /\bopenai-codex\b/i.test(auth.raw);
+  const publicationMode = env.MEDIA_ENGINE_PUBLICATION_MODE || 'draft';
+  const approvedAutomaticMode = publicationMode === 'automatic'
+    && enabled(env.MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED)
+    && enabled(env.MEDIA_ENGINE_PUSH_ENABLED);
   const checks = [
     check('registry', registryErrors.length === 0, registryErrors),
     check('topics', missingTopics.length === 0, { missing: missingTopics }),
@@ -68,7 +72,7 @@ export async function runPreflight({
       model: imageModel || null,
       error: imageError,
     }),
-    check('safe-publication-mode', (env.MEDIA_ENGINE_PUBLICATION_MODE || 'draft') === 'draft', env.MEDIA_ENGINE_PUBLICATION_MODE || 'draft'),
+    check('safe-publication-mode', publicationMode === 'draft' || approvedAutomaticMode, publicationMode),
   ];
   const readyForShadow = checks.every((entry) => entry.passed);
   const enrichmentChecks = [
@@ -77,7 +81,7 @@ export async function runPreflight({
   const publishingChecks = [
     check(
       'runtime-health',
-      runtimeHealth?.status === 'healthy',
+      Boolean(runtimeHealth) && (runtimeHealth.blockers || []).length === 0,
       runtimeHealth ? { status: runtimeHealth.status, blockers: runtimeHealth.blockers || [] } : 'absent',
     ),
     check('automatic-publication-approved', enabled(env.MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED), env.MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED || 'false'),

@@ -21,6 +21,7 @@ source "$CONFIG_DIR/media-engine.env"
 source "$CONFIG_DIR/shadow.env"
 set +a
 preflight="$(
+  MEDIA_ENGINE_PUBLICATION_ENV_FILE=/dev/null \
   MEDIA_ENGINE_PUBLICATION_MODE=automatic \
   MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED=true \
   MEDIA_ENGINE_PUSH_ENABLED=true \
@@ -34,14 +35,31 @@ fi
 
 publication_tmp="$CONFIG_DIR/publication.env.$$.tmp"
 install -m 0640 /dev/null "$publication_tmp"
+cutover_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [[ -r "$CONFIG_DIR/publication.env" ]]; then
+  previous_cutover="$(sed -n 's/^MEDIA_ENGINE_AUTOMATIC_CUTOVER_AT=//p' "$CONFIG_DIR/publication.env" | tail -n 1)"
+  [[ -n "$previous_cutover" ]] && cutover_at="$previous_cutover"
+fi
 printf '%s\n' \
   'MEDIA_ENGINE_PUBLICATION_MODE=automatic' \
   'MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED=true' \
-  'MEDIA_ENGINE_PUSH_ENABLED=true' > "$publication_tmp"
+  'MEDIA_ENGINE_PUSH_ENABLED=true' \
+  "MEDIA_ENGINE_AUTOMATIC_CUTOVER_AT=$cutover_at" \
+  "MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT=${MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT:-6}" \
+  "MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT=${MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT:-1}" \
+  "MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES=${MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES:-90}" \
+  "MEDIA_ENGINE_NEWS_MAX_AGE_HOURS=${MEDIA_ENGINE_NEWS_MAX_AGE_HOURS:-72}" \
+  "MEDIA_ENGINE_VIDEO_LOOKBACK_DAYS=${MEDIA_ENGINE_VIDEO_LOOKBACK_DAYS:-7}" > "$publication_tmp"
 if [[ -e "$CONFIG_DIR/publication.env" ]]; then
   cp -a "$CONFIG_DIR/publication.env" "$CONFIG_DIR/publication.env.backup-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
 mv -f "$publication_tmp" "$CONFIG_DIR/publication.env"
+
+/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs curate \
+  --apply \
+  --cutover-at "$cutover_at" \
+  --news-max-age-hours "${MEDIA_ENGINE_NEWS_MAX_AGE_HOURS:-72}" \
+  --json | jq .
 
 systemctl disable --now \
   tesla-tech-news.timer \
