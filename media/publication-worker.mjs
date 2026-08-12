@@ -279,6 +279,9 @@ export class PublicationWorker {
   }
 
   async run({ mediaSlug = null, dryRun = false, limit = 1 } = {}) {
+    const lease = dryRun ? null : this.store.acquireLease('publication-cycle', { ttlMs: 50 * 60_000 });
+    if (!dryRun && !lease) return { skipped: true, reason: 'publication-lease-active', inspected: 0, heldCount: 0, held: [], results: [] };
+    try {
     const paths = this.store.listDraftPaths(mediaSlug);
     const results = [];
     const held = [];
@@ -306,7 +309,10 @@ export class PublicationWorker {
       results.push(published);
       if (!dryRun && published?.publishedAt) receipts.push(published);
     }
-    return { inspected: paths.length, heldCount: held.length, held: held.slice(0, 25), results };
+      return { inspected: paths.length, heldCount: held.length, held: held.slice(0, 25), results };
+    } finally {
+      if (lease) this.store.releaseLease(lease);
+    }
   }
 }
 

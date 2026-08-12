@@ -1060,6 +1060,17 @@ test('publication automatique: la bascule ignore l’historique et impose un ryt
   assert.ok(throttled.held.some((entry) => entry.blockers.some((blocker) => blocker.startsWith('network-cooldown-until-'))));
 });
 
+test('publication automatique: un lease interdit deux workers simultanés', async () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-lease-')));
+  store.initialize();
+  const lease = store.acquireLease('publication-cycle');
+  const worker = new PublicationWorker({ store });
+  const result = await worker.run();
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'publication-lease-active');
+  store.releaseLease(lease);
+});
+
 test('supervision: un état jamais observé crée une seule alerte explicite par jour', () => {
   const root = mkdtempSync(join(tmpdir(), 'media-monitor-'));
   const store = new MediaStateStore(root);
