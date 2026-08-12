@@ -205,7 +205,7 @@ export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REV
 export function transcriptBlockNeedsCaption(reason = '') {
   const value = String(reason);
   return /(transcript|transcription|sous-titres)/i.test(value)
-    && /(incomplet|tronqu|manqu|partial|incomplete|truncat)/i.test(value);
+    && /(incompl|tronqu|manqu|partial|incomplete|truncat)/i.test(value);
 }
 
 export function videoDraftReceipt(draft, candidateId) {
