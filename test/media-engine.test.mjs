@@ -36,6 +36,7 @@ import {
   offerForUrl,
   publishedVideoPath,
   shouldGenerateDraftForEvent,
+  transcriptBlockNeedsCaption,
   videoDraftReceipt,
 } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
@@ -531,6 +532,18 @@ test('cycle vidéo: un ancien blocage sans motif est repris une seule fois', () 
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), true);
   store.markEvent('video-draft:chaimbault:legacy', { status: 'editorial-blocked', reason: 'source-insuffisante' });
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), false);
+});
+
+test('cycle vidéo: une transcription tronquée bascule vers les sous-titres officiels', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-truncated-caption-')));
+  const key = 'video-draft:chaimbault:truncated';
+  store.markEvent(key, {
+    status: 'editorial-blocked',
+    reason: 'La transcription fournie est tronquée avant la fin.',
+  });
+  assert.equal(transcriptBlockNeedsCaption(store.getEvent(key).reason), true);
+  assert.equal(shouldGenerateDraftForEvent(store, key), true);
+  assert.equal(transcriptBlockNeedsCaption('source officielle insuffisante'), false);
 });
 
 test('Hermes: les URL directes des posts x_search deviennent des preuves traçables', async () => {

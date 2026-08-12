@@ -19,7 +19,7 @@ import {
 import { qaDraft } from './qa.mjs';
 import { guideCandidate, selectGuideOpportunity } from './guide-planner.mjs';
 import { HermesClient } from './hermes-client.mjs';
-import { MediaStateStore } from './state-store.mjs';
+import { MediaStateStore, readJson } from './state-store.mjs';
 
 function xItems(result, media) {
   if (result.degraded) return [];
@@ -193,8 +193,14 @@ export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REV
   // Les versions antérieures perdaient le motif des blocages éditoriaux. Une
   // reprise unique permet de les reclasser comme doublon, déjà publié ou vrai
   // blocage; le nouveau reçu conserve ensuite le motif et reste idempotent.
-  if (event.status === 'editorial-blocked' && !event.reason) return true;
+  if (event.status === 'editorial-blocked' && (!event.reason || transcriptBlockNeedsCaption(event.reason))) return true;
   return event.status === 'qa-failed' && event.editorialRevision !== revision;
+}
+
+export function transcriptBlockNeedsCaption(reason = '') {
+  const value = String(reason);
+  return /(transcript|transcription|sous-titres)/i.test(value)
+    && /(incomplet|tronqu|manqu|partial|incomplete|truncat)/i.test(value);
 }
 
 export function videoDraftReceipt(draft, candidateId) {
@@ -602,6 +608,42 @@ export class MediaEngine {
           results.push({ mediaSlug: media.slug, skipped: true, reason: 'short-or-live', videoId: unseen.videoId });
           continue;
         }
+        const eventKey = `video-draft:${media.slug}:${unseen.videoId}`;
+        const previousEvent = this.store.getEvent(eventKey);
+        const captionRequestPath = join(this.store.queueDir, 'caption-requests', `${unseen.videoId}.json`);
+        const existingCaptionRequest = readJson(captionRequestPath, null);
+        const captionRequestComplete = existingCaptionRequest?.status === 'complete';
+        const awaitingOfficialCaption = previousEvent?.reason === 'transcript-incomplete-caption-requested'
+          && !captionRequestComplete;
+        const legacyTranscriptBlock = previousEvent?.status === 'editorial-blocked'
+          && transcriptBlockNeedsCaption(previousEvent.reason)
+          && !captionRequestComplete;
+        if (awaitingOfficialCaption || legacyTranscriptBlock) {
+          if (!existingCaptionRequest) {
+            this.store.enqueue('caption-requests', unseen.videoId, {
+              version: 1,
+              videoId: unseen.videoId,
+              mediaSlug: media.slug,
+              channelId: media.channelId,
+              title: info.title || unseen.title || null,
+              languagePreferences: ['fr', 'en'],
+              requestedAt: new Date().toISOString(),
+              status: 'pending',
+            });
+          }
+          this.store.markEvent(eventKey, {
+            status: 'retryable-failure',
+            reason: 'transcript-incomplete-caption-requested',
+            nextRetryAt: retryAt(6),
+          });
+          results.push({
+            mediaSlug: media.slug,
+            videoId: unseen.videoId,
+            failed: true,
+            reason: 'transcript-incomplete-caption-requested',
+          });
+          continue;
+        }
         if (!info.transcriptText || info.transcriptText.length < 500) {
           // Le moteur ne reçoit jamais de jeton Google. Il dépose seulement une
           // demande idempotente que le Studio, propriétaire des identifiants OAuth,
@@ -681,11 +723,38 @@ export class MediaEngine {
         thumbnailHeight: thumbnail.height,
         };
         const draft = await this.generateDraft(candidate, { contentType: 'video', video, generateBanner: false });
-        this.store.markEvent(
-          `video-draft:${media.slug}:${unseen.videoId}`,
-          videoDraftReceipt(draft, candidate.id),
-        );
-        results.push({ mediaSlug: media.slug, videoId: unseen.videoId, draft });
+        let receipt = videoDraftReceipt(draft, candidate.id);
+        if (receipt.status === 'editorial-blocked' && transcriptBlockNeedsCaption(receipt.reason)) {
+          const request = readJson(captionRequestPath, null);
+          if (request?.status !== 'complete') {
+            if (!request) {
+              this.store.enqueue('caption-requests', unseen.videoId, {
+                version: 1,
+                videoId: unseen.videoId,
+                mediaSlug: media.slug,
+                channelId: media.channelId,
+                title: info.title || unseen.title || null,
+                languagePreferences: ['fr', 'en'],
+                requestedAt: new Date().toISOString(),
+                status: 'pending',
+              });
+            }
+            receipt = {
+              status: 'retryable-failure',
+              reason: 'transcript-incomplete-caption-requested',
+              nextRetryAt: retryAt(6),
+              editorialRevision: EDITORIAL_REVISION,
+              candidateId: candidate.id,
+            };
+          }
+        }
+        this.store.markEvent(eventKey, receipt);
+        results.push({
+          mediaSlug: media.slug,
+          videoId: unseen.videoId,
+          draft,
+          ...(receipt.status === 'retryable-failure' ? { failed: true, reason: receipt.reason } : {}),
+        });
       } catch (error) {
         const message = String(error?.message || error);
         if (!dryRun && unseen?.videoId) {
