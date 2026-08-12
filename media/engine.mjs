@@ -188,6 +188,11 @@ export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REV
   const event = store.getEvent(key);
   if (!event) return true;
   if (event.status === 'retryable-failure') {
+    if (event.reason === 'transcript-incomplete-caption-requested' && key.startsWith('video-draft:')) {
+      const videoId = key.split(':').at(-1);
+      const request = readJson(join(store.queueDir, 'caption-requests', `${videoId}.json`), null);
+      if (request?.status === 'complete') return true;
+    }
     return !event.nextRetryAt || Number.isNaN(Date.parse(event.nextRetryAt)) || Date.parse(event.nextRetryAt) <= Date.now();
   }
   // Les versions antérieures perdaient le motif des blocages éditoriaux. Une

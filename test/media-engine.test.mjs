@@ -546,6 +546,22 @@ test('cycle vidéo: une transcription tronquée bascule vers les sous-titres off
   assert.equal(transcriptBlockNeedsCaption('source officielle insuffisante'), false);
 });
 
+test('cycle vidéo: la réception des sous-titres officiels débloque immédiatement la reprise', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-caption-complete-')));
+  store.enqueue('caption-requests', 'captionDone123', {
+    version: 1,
+    videoId: 'captionDone123',
+    status: 'complete',
+  });
+  const key = 'video-draft:chaimbault:captionDone123';
+  store.markEvent(key, {
+    status: 'retryable-failure',
+    reason: 'transcript-incomplete-caption-requested',
+    nextRetryAt: new Date(Date.now() + 6 * 3_600_000).toISOString(),
+  });
+  assert.equal(shouldGenerateDraftForEvent(store, key), true);
+});
+
 test('Hermes: les URL directes des posts x_search deviennent des preuves traçables', async () => {
   const client = new HermesClient({
     command: ['hermes'],
