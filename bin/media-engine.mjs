@@ -96,9 +96,10 @@ try {
   } else if (command === 'publish') {
     const worker = new PublicationWorker({ store: engine.store, siteConfigs: loadSiteConfigs() });
     const draftPath = argument('--draft');
-    output(draftPath
+    result = draftPath
       ? await worker.publishDraftPath(draftPath, { dryRun })
-      : await worker.run({ mediaSlug, dryRun, limit: Number(argument('--limit', '1')) }));
+      : await worker.run({ mediaSlug, dryRun, limit: Number(argument('--limit', '1')) });
+    output(result);
   } else if (command === 'run') {
     result = await engine.runCycle({ mediaSlug, dryRun });
     output(result);

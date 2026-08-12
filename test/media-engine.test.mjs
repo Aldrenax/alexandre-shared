@@ -913,6 +913,12 @@ test('publication VPS: npm utilise le cache runtime autorisé par systemd', () =
   assert.match(unit, /^ReadWritePaths=.*\/var\/lib\/alexandre-media-engine(?:\s|$)/m);
 });
 
+test('publication VPS: le CLI conserve le résultat pour enregistrer le cycle', () => {
+  const cli = readFileSync(new URL('../bin/media-engine.mjs', import.meta.url), 'utf8');
+  assert.match(cli, /result = draftPath\s*\? await worker\.publishDraftPath/);
+  assert.match(cli, /output\(result\);/);
+});
+
 test('publication: fraîcheur immédiate en journée et report au matin pendant la nuit', () => {
   assert.equal(
     recommendedPublicationTime('news', { now: new Date('2026-08-05T10:00:00.000Z') }).toISOString(),
