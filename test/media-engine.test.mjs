@@ -565,6 +565,19 @@ test('cycle vidéo: la réception des sous-titres officiels débloque immédiate
     nextRetryAt: new Date(Date.now() + 6 * 3_600_000).toISOString(),
   });
   assert.equal(shouldGenerateDraftForEvent(store, key), true);
+
+  store.enqueue('caption-requests', 'captionUnavailable123', {
+    version: 1,
+    videoId: 'captionUnavailable123',
+    status: 'complete',
+  });
+  const unavailableKey = 'video-draft:chaimbault:captionUnavailable123';
+  store.markEvent(unavailableKey, {
+    status: 'retryable-failure',
+    reason: 'transcript-unavailable-caption-requested',
+    nextRetryAt: new Date(Date.now() + 6 * 3_600_000).toISOString(),
+  });
+  assert.equal(shouldGenerateDraftForEvent(store, unavailableKey), true);
 });
 
 test('Hermes: les URL directes des posts x_search deviennent des preuves traçables', async () => {

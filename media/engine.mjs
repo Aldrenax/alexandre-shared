@@ -188,7 +188,8 @@ export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REV
   const event = store.getEvent(key);
   if (!event) return true;
   if (event.status === 'retryable-failure') {
-    if (event.reason === 'transcript-incomplete-caption-requested' && key.startsWith('video-draft:')) {
+    if (['transcript-incomplete-caption-requested', 'transcript-unavailable-caption-requested'].includes(event.reason)
+      && key.startsWith('video-draft:')) {
       const videoId = key.split(':').at(-1);
       const request = readJson(join(store.queueDir, 'caption-requests', `${videoId}.json`), null);
       if (request?.status === 'complete') return true;
