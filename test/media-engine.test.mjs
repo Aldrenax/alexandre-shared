@@ -22,7 +22,7 @@ import { curateDraftQueue } from '../media/draft-curation.mjs';
 import { collectSource, enrichCandidateEvidence, extractBalancedEvidence, extractReadableText } from '../media/source-collector.mjs';
 import { defaultHermesCommand, HermesClient, parseJsonPayload } from '../media/hermes-client.mjs';
 import { loadEnvironmentFile } from '../media/environment.mjs';
-import { buildEditorialPrompt, normalizeDraft } from '../media/editorial.mjs';
+import { buildEditorialPrompt, EDITORIAL_REVISION, normalizeDraft } from '../media/editorial.mjs';
 import { publicationDecision, qaDraft } from '../media/qa.mjs';
 import { MediaStateStore } from '../media/state-store.mjs';
 import { auditDraftOutboundLinks, formatVideoDuration, renderMdxDraft } from '../media/site-publisher.mjs';
@@ -526,7 +526,7 @@ test('cycle vidéo: un doublon publié est classé comme historique, avec son mo
     status: 'already-published',
     reason: 'already-published-or-similar',
     path: '/blog/article-existant/',
-    editorialRevision: 10,
+    editorialRevision: EDITORIAL_REVISION,
     candidateId: 'youtube-123',
   });
 });
@@ -536,6 +536,18 @@ test('cycle vidéo: un ancien blocage sans motif est repris une seule fois', () 
   store.markEvent('video-draft:chaimbault:legacy', { status: 'editorial-blocked' });
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), true);
   store.markEvent('video-draft:chaimbault:legacy', { status: 'editorial-blocked', reason: 'source-insuffisante' });
+  assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), false);
+  store.markEvent('video-draft:chaimbault:legacy', {
+    status: 'editorial-blocked',
+    reason: 'source-insuffisante',
+    editorialRevision: EDITORIAL_REVISION - 1,
+  });
+  assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), true);
+  store.markEvent('video-draft:chaimbault:legacy', {
+    status: 'editorial-blocked',
+    reason: 'source-insuffisante',
+    editorialRevision: EDITORIAL_REVISION,
+  });
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), false);
 });
 
@@ -717,6 +729,10 @@ test('rédaction vidéo: la source YouTube et l’offre exacte sont injectées s
   assert.deepEqual(draft.sourceUrls, ['https://www.youtube.com/watch?v=dzQLM3agA_o']);
   assert.equal(draft.offer.id, 'deblock');
   assert.equal(normalizeDraft({ ...draft, slug: 'deblock-dzqlm3aga_o' }, { contentType: 'video', candidate, media }).slug, 'deblock-dzqlm3aga-o');
+
+  const prompt = buildEditorialPrompt({ media, candidate, contentType: 'video', video: { transcript: 'transcription complète' } });
+  assert.match(prompt, /La vidéo est la source primaire de cette adaptation/);
+  assert.match(prompt, /L’absence de source externe ne suffit pas/);
 });
 
 test('rédaction guide: le paquet conserve les preuves détaillées sans imposer un comparatif inventé', () => {

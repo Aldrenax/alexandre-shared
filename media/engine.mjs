@@ -199,7 +199,11 @@ export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REV
   // Les versions antérieures perdaient le motif des blocages éditoriaux. Une
   // reprise unique permet de les reclasser comme doublon, déjà publié ou vrai
   // blocage; le nouveau reçu conserve ensuite le motif et reste idempotent.
-  if (event.status === 'editorial-blocked' && (!event.reason || transcriptBlockNeedsCaption(event.reason))) return true;
+  if (event.status === 'editorial-blocked' && (
+    !event.reason
+    || transcriptBlockNeedsCaption(event.reason)
+    || (Number.isFinite(event.editorialRevision) && event.editorialRevision !== revision)
+  )) return true;
   return event.status === 'qa-failed' && event.editorialRevision !== revision;
 }
 

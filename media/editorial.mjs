@@ -13,7 +13,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 10;
+export const EDITORIAL_REVISION = 11;
 
 function normalizedSlug(value, fallback = '') {
   return String(value || fallback)
@@ -141,6 +141,8 @@ function typeInstructions(type, context) {
     '- Transforme la transcription complète en article autonome et structuré.',
     '- Intègre la vidéo en introduction et conserve les idées réellement exprimées.',
     '- N’invente ni test, ni expérience, ni résultat absent de la vidéo.',
+    '- La vidéo est la source primaire de cette adaptation: un fait sensible non corroboré doit être attribué explicitement à la vidéo avec une formulation comme « dans la vidéo, je présente » ou « selon la vidéo », jamais présenté comme une règle confirmée.',
+    '- L’absence de source externe ne suffit pas, à elle seule, à bloquer une adaptation fidèle de la vidéo. Ajoute les réserves et avertissements requis, invite le lecteur à vérifier sa situation auprès d’une source officielle et bloque seulement si la transcription ne permet pas une restitution exacte.',
     `CONTEXTE VIDÉO JSON: ${JSON.stringify(context.video || null)}`,
   ];
   return [
