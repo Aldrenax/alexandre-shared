@@ -35,6 +35,7 @@ import {
   offerForUrl,
   publishedVideoPath,
   shouldGenerateDraftForEvent,
+  videoDraftReceipt,
 } from '../media/engine.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { recommendedPublicationTime } from '../media/publication-schedule.mjs';
@@ -459,6 +460,40 @@ test('Hermes: extraction JSON et x_search dégradé sans citation', async () => 
   assert.ok(calls[0].args.includes('gpt-5.6-terra'));
 });
 
+test('Hermes: les prompts Docker longs passent par stdin et jamais dans argv', async () => {
+  const calls = [];
+  const client = new HermesClient({
+    command: ['/usr/bin/docker', 'exec', '--user', '10000:10000', 'hermes-agent', '/opt/hermes/.venv/bin/hermes'],
+    env: {},
+    executeImpl: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: '{"ok":true}', stderr: '', code: 0 };
+    },
+  });
+  const prompt = 'preuve '.repeat(40_000);
+  assert.deepEqual(await client.oneshotJson(prompt, { model: 'gpt-5.6-terra', provider: 'openai-codex' }), { ok: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, '/usr/bin/docker');
+  assert.ok(calls[0].args.includes('-i'));
+  assert.ok(calls[0].args.includes('-c'));
+  assert.ok(!calls[0].args.includes(prompt));
+  assert.match(calls[0].options.input, /preuve preuve/);
+});
+
+test('cycle vidéo: un doublon publié est classé comme historique, avec son motif', () => {
+  assert.deepEqual(videoDraftReceipt({
+    status: 'blocked',
+    reason: 'already-published-or-similar',
+    publishedPath: '/blog/article-existant/',
+  }, 'youtube-123'), {
+    status: 'already-published',
+    reason: 'already-published-or-similar',
+    path: '/blog/article-existant/',
+    editorialRevision: 10,
+    candidateId: 'youtube-123',
+  });
+});
+
 test('Hermes: les URL directes des posts x_search deviennent des preuves traçables', async () => {
   const client = new HermesClient({
     command: ['hermes'],
@@ -490,6 +525,7 @@ test('Hermes: exécute le CLI avec l’utilisateur du volume OAuth quand il est 
   }), [
     '/usr/bin/docker',
     'exec',
+    '-i',
     '--user',
     '10000:10000',
     'hermes-agent',
@@ -833,6 +869,40 @@ test('supervision: un échec vidéo ou un OOM systemd interdit le statut healthy
   assert.equal(health.status, 'degraded');
   assert.ok(health.blockers.includes('last-video-run-degraded'));
   assert.ok(health.blockers.includes('video-service-oom-kill'));
+});
+
+test('supervision: un cycle vidéo vide ne masque pas une reprise encore prête', () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-monitor-video-backlog-'));
+  const store = new MediaStateStore(root);
+  store.write('source-health', {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sources: { official: { sourceId: 'official', required: true, status: 'healthy' } },
+  });
+  store.write('last-runs', {
+    version: 1,
+    runs: {
+      run: { at: new Date().toISOString(), status: 'success' },
+      video: { at: new Date().toISOString(), status: 'success' },
+    },
+  });
+  store.markEvent('video-draft:chaimbault:retry-me', {
+    status: 'retryable-failure',
+    reason: 'transient',
+    nextRetryAt: new Date(Date.now() - 60_000).toISOString(),
+  });
+  store.markEvent('video-draft:chaimbault:already-done', {
+    status: 'already-published',
+  });
+  const health = new MediaEngine({ store }).healthReport();
+  assert.equal(health.status, 'degraded');
+  assert.ok(health.blockers.includes('video-retryable-failures-ready'));
+  assert.deepEqual(health.videoBacklog, {
+    retryableReady: 1,
+    retryableDeferred: 0,
+    qaFailed: 0,
+    editorialBlocked: 0,
+  });
 });
 
 test('préflight: ChatGPT, topics et dépôts sont requis, xAI reste un enrichissement visible', async () => {

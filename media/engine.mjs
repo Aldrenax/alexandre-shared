@@ -193,6 +193,44 @@ export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REV
   return event.status === 'qa-failed' && event.editorialRevision !== revision;
 }
 
+export function videoDraftReceipt(draft, candidateId) {
+  if (draft?.qa?.passed) {
+    return { status: 'qa-passed', editorialRevision: EDITORIAL_REVISION, candidateId };
+  }
+  if (draft?.status === 'blocked') {
+    if (draft.reason === 'already-published-or-similar') {
+      return {
+        status: 'already-published',
+        reason: draft.reason,
+        path: draft.publishedPath || null,
+        editorialRevision: EDITORIAL_REVISION,
+        candidateId,
+      };
+    }
+    if (String(draft.reason || '').startsWith('duplicate-draft:')) {
+      return {
+        status: 'duplicate-draft',
+        reason: draft.reason,
+        path: draft.duplicateDraftPath || null,
+        editorialRevision: EDITORIAL_REVISION,
+        candidateId,
+      };
+    }
+    return {
+      status: 'editorial-blocked',
+      reason: draft.reason || 'motif non fourni',
+      editorialRevision: EDITORIAL_REVISION,
+      candidateId,
+    };
+  }
+  return {
+    status: 'qa-failed',
+    reason: draft?.qa?.issues?.map((issue) => issue.code).filter(Boolean).join(', ') || 'qa-failed',
+    editorialRevision: EDITORIAL_REVISION,
+    candidateId,
+  };
+}
+
 function retryAt(hours) {
   return new Date(Date.now() + hours * 3_600_000).toISOString();
 }
@@ -619,11 +657,10 @@ export class MediaEngine {
         thumbnailHeight: thumbnail.height,
         };
         const draft = await this.generateDraft(candidate, { contentType: 'video', video, generateBanner: false });
-        this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
-          status: draft.qa?.passed ? 'qa-passed' : draft.status === 'blocked' ? 'editorial-blocked' : 'qa-failed',
-          editorialRevision: EDITORIAL_REVISION,
-          candidateId: candidate.id,
-        });
+        this.store.markEvent(
+          `video-draft:${media.slug}:${unseen.videoId}`,
+          videoDraftReceipt(draft, candidate.id),
+        );
         results.push({ mediaSlug: media.slug, videoId: unseen.videoId, draft });
       } catch (error) {
         const message = String(error?.message || error);
@@ -688,6 +725,17 @@ export class MediaEngine {
     const networkRun = lastRuns.runs?.run || null;
     const videoRun = lastRuns.runs?.video || null;
     const videoUnit = this.store.read('systemd-video', null);
+    const eventState = this.store.read('events', { events: {} });
+    const videoEvents = Object.entries(eventState.events || {})
+      .filter(([key]) => key.startsWith('video-draft:'))
+      .map(([, event]) => event || {});
+    const now = Date.now();
+    const retryableReady = videoEvents.filter((event) => event.status === 'retryable-failure'
+      && (!event.nextRetryAt || Number.isNaN(Date.parse(event.nextRetryAt)) || Date.parse(event.nextRetryAt) <= now)).length;
+    const retryableDeferred = videoEvents.filter((event) => event.status === 'retryable-failure'
+      && event.nextRetryAt && !Number.isNaN(Date.parse(event.nextRetryAt)) && Date.parse(event.nextRetryAt) > now).length;
+    const qaFailed = videoEvents.filter((event) => event.status === 'qa-failed').length;
+    const editorialBlocked = videoEvents.filter((event) => event.status === 'editorial-blocked').length;
     const networkAgeHours = networkRun?.at && !Number.isNaN(Date.parse(networkRun.at))
       ? (Date.now() - Date.parse(networkRun.at)) / 3_600_000
       : null;
@@ -707,6 +755,10 @@ export class MediaEngine {
     if (videoRun?.status === 'degraded') blockers.push('last-video-run-degraded');
     if (videoAgeHours != null && videoAgeHours > 3) blockers.push('video-run-stale');
     if (videoUnit && videoUnit.result !== 'success') blockers.push(`video-service-${videoUnit.result || 'failed'}`);
+    if (retryableReady > 0) blockers.push('video-retryable-failures-ready');
+    if (qaFailed > 0) blockers.push('video-qa-failures');
+    if (editorialBlocked > 0) blockers.push('video-editorial-blocked');
+    if (retryableDeferred > 0) warnings.push('video-retries-scheduled');
     if (xValues.length && xValues.every((result) => result.degraded)) warnings.push('x-search-unavailable');
     if (blockers.length) status = blockers.some((value) => /failed|below/.test(value)) ? 'critical' : 'degraded';
     else if (warnings.length) status = 'degraded';
@@ -727,6 +779,12 @@ export class MediaEngine {
         total: xValues.length,
         cited: xValues.filter((result) => result.citations?.length && !result.degraded).length,
         degraded: xValues.filter((result) => result.degraded).length,
+      },
+      videoBacklog: {
+        retryableReady,
+        retryableDeferred,
+        qaFailed,
+        editorialBlocked,
       },
       publicationMode: 'draft',
       freshness: {

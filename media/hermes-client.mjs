@@ -13,10 +13,24 @@ function defaultHermesCommand(env = process.env) {
   return [
     env.DOCKER_BIN || '/usr/bin/docker',
     'exec',
+    '-i',
     ...(dockerUser ? ['--user', dockerUser] : []),
     env.HERMES_CONTAINER || 'hermes-agent',
     env.HERMES_BIN || '/opt/hermes/.venv/bin/hermes',
   ];
+}
+
+const STDIN_ONESHOT_PYTHON = [
+  'import sys',
+  'prompt = sys.stdin.read()',
+  'sys.argv = ["hermes", "--oneshot", prompt, *sys.argv[1:]]',
+  'from hermes_cli.main import main',
+  'main()',
+].join('; ');
+
+function supportsStdinOneshot(command) {
+  return /(?:^|\/)docker$/.test(String(command?.[0] || ''))
+    && /(?:^|\/)hermes$/.test(String(command?.at?.(-1) || ''));
 }
 
 export function parseJsonPayload(value) {
@@ -37,17 +51,24 @@ export function parseJsonPayload(value) {
   }
 }
 
-function execute(command, args, { cwd, env, timeoutMs = 300_000 } = {}) {
+function execute(command, args, {
+  cwd,
+  env,
+  input = null,
+  timeoutMs = 300_000,
+} = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       env: { ...process.env, ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input == null ? '' : String(input));
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`Hermes timeout après ${timeoutMs} ms`));
@@ -70,11 +91,15 @@ export class HermesClient {
     cwd = process.cwd(),
     env = {},
     executeImpl = execute,
+    promptTransport = null,
   } = {}) {
     this.command = command;
     this.cwd = cwd;
     this.env = { ...process.env, ...env };
     this.executeImpl = executeImpl;
+    this.promptTransport = promptTransport
+      || this.env.HERMES_PROMPT_TRANSPORT
+      || (supportsStdinOneshot(command) ? 'stdin' : 'argv');
   }
 
   editorialOptions({ contentType = 'news', image = false } = {}) {
@@ -97,14 +122,35 @@ export class HermesClient {
     timeoutMs = 300_000,
   } = {}) {
     const [command, ...prefix] = this.command;
-    const args = [...prefix, '--oneshot', prompt];
-    if (model) args.push('--model', model);
-    if (provider) args.push('--provider', provider);
-    if (reasoning) args.push('--reasoning', reasoning);
-    if (toolsets) args.push('--toolsets', Array.isArray(toolsets) ? toolsets.join(',') : toolsets);
+    const options = [];
+    if (model) options.push('--model', model);
+    if (provider) options.push('--provider', provider);
+    if (reasoning) options.push('--reasoning', reasoning);
+    if (toolsets) options.push('--toolsets', Array.isArray(toolsets) ? toolsets.join(',') : toolsets);
+    let args;
+    let input = null;
+    if (this.promptTransport === 'stdin') {
+      if (!supportsStdinOneshot(this.command)) {
+        throw new Error('Transport stdin Hermes disponible uniquement avec docker exec');
+      }
+      const hermesBin = prefix.at(-1);
+      const dockerPrefix = prefix.slice(0, -1);
+      if (!dockerPrefix.includes('-i')) dockerPrefix.splice(1, 0, '-i');
+      args = [
+        ...dockerPrefix,
+        hermesBin.replace(/\/hermes$/, '/python3'),
+        '-c',
+        STDIN_ONESHOT_PYTHON,
+        ...options,
+      ];
+      input = prompt;
+    } else {
+      args = [...prefix, '--oneshot', prompt, ...options];
+    }
     const result = await this.executeImpl(command, args, {
       cwd: this.cwd,
       env: this.env,
+      input,
       timeoutMs,
     });
     return result.stdout.trim();

@@ -10,6 +10,7 @@ Type=oneshot
 User=root
 WorkingDirectory=/opt/alexandre-media-engine/current
 EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
+EnvironmentFile=-/etc/alexandre-media-engine/shadow.env
 Environment=HF_HOME=/var/lib/alexandre-media-engine/cache/huggingface
 Environment=XDG_CACHE_HOME=/var/lib/alexandre-media-engine/cache
 Environment=WHISPER_MODEL=base
@@ -21,6 +22,7 @@ Environment=MKL_NUM_THREADS=2
 Environment=MALLOC_ARENA_MAX=2
 Environment=YTDLP_ATTEMPTS=3
 Environment=YTDLP_ALLOW_DIRECT_FALLBACK=true
+ExecStartPre=/opt/alexandre-media-engine/current/bin/ensure-hermes-log-permissions.sh
 ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs video --json
 ExecStopPost=/bin/sh -c '/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine-unit-receipt.mjs video "$SERVICE_RESULT" "$EXIT_CODE" "$EXIT_STATUS"'
 TimeoutStartSec=2h

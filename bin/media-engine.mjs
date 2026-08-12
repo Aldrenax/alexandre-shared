@@ -7,6 +7,27 @@ import { loadSiteConfigs, PublicationWorker } from '../media/publication-worker.
 import { runPreflight } from '../media/preflight.mjs';
 import { registrySnapshot, validateRegistry } from '../media/registry.mjs';
 
+function loadEnvironmentFile(path) {
+  if (!existsSync(path)) return;
+  for (const rawLine of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match || process.env[match[1]] !== undefined) continue;
+    let value = match[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[match[1]] = value;
+  }
+}
+
+// Les commandes opérateur et les heartbeats appellent aussi le CLI hors
+// systemd. Charger les mêmes fichiers garantit un préflight fidèle, notamment
+// pour le compteur shadow, sans dupliquer les valeurs dans plusieurs fichiers.
+loadEnvironmentFile(process.env.MEDIA_ENGINE_ENV_FILE || '/etc/alexandre-media-engine/media-engine.env');
+loadEnvironmentFile(process.env.MEDIA_ENGINE_SHADOW_ENV_FILE || '/etc/alexandre-media-engine/shadow.env');
+
 function argument(name, fallback = null) {
   const index = process.argv.indexOf(name);
   return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
