@@ -508,6 +508,14 @@ test('cycle vidéo: un doublon publié est classé comme historique, avec son mo
   });
 });
 
+test('cycle vidéo: un ancien blocage sans motif est repris une seule fois', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-legacy-blocked-')));
+  store.markEvent('video-draft:chaimbault:legacy', { status: 'editorial-blocked' });
+  assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), true);
+  store.markEvent('video-draft:chaimbault:legacy', { status: 'editorial-blocked', reason: 'source-insuffisante' });
+  assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), false);
+});
+
 test('Hermes: les URL directes des posts x_search deviennent des preuves traçables', async () => {
   const client = new HermesClient({
     command: ['hermes'],
