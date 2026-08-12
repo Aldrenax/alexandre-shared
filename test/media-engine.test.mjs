@@ -22,7 +22,14 @@ import { curateDraftQueue } from '../media/draft-curation.mjs';
 import { collectSource, enrichCandidateEvidence, extractBalancedEvidence, extractReadableText } from '../media/source-collector.mjs';
 import { defaultHermesCommand, HermesClient, parseJsonPayload } from '../media/hermes-client.mjs';
 import { loadEnvironmentFile } from '../media/environment.mjs';
-import { buildEditorialPrompt, EDITORIAL_REVISION, normalizeDraft } from '../media/editorial.mjs';
+import {
+  ARTICLE_THUMBNAIL_POLICY,
+  articleThumbnailProfile,
+  buildBannerPrompt,
+  buildEditorialPrompt,
+  EDITORIAL_REVISION,
+  normalizeDraft,
+} from '../media/editorial.mjs';
 import { publicationDecision, qaDraft } from '../media/qa.mjs';
 import { MediaStateStore } from '../media/state-store.mjs';
 import { auditDraftOutboundLinks, formatVideoDuration, renderMdxDraft } from '../media/site-publisher.mjs';
@@ -56,6 +63,32 @@ test('registre: huit chaînes, six médias éditoriaux et sources officielles', 
   }
   assert.equal(mediaBySlug('daily').editorialEnabled, false);
   assert.equal(mediaBySlug('askoptimize').editorialEnabled, false);
+});
+
+test('miniature article: adaptation image unique de youtube-thumbnail-imagegen et DA par chaîne', () => {
+  const media = mediaBySlug('investissement');
+  const draft = {
+    contentType: 'guide',
+    title: 'Le piège des frais invisibles',
+    description: 'Un guide factuel sur les limites et les frais.',
+    bannerBrief: {
+      headline: 'FRAIS INVISIBLES',
+      concept: 'Une facture simple avec une ligne de frais mise en évidence',
+    },
+  };
+  const prompt = buildBannerPrompt({ media, draft });
+
+  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v1');
+  assert.match(prompt, /UNE SEULE miniature/);
+  assert.match(prompt, /Ne propose pas de variantes/);
+  assert.match(prompt, /skill youtube-thumbnail-imagegen/);
+  assert.match(prompt, /2 à 4 mots/);
+  assert.match(prompt, /un seul élément dominant/);
+  assert.match(prompt, /Aucun visage/);
+  assert.match(prompt, /vert finance #024F02 a #007000/);
+  assert.match(prompt, /Direction: Trap \/ Truth/);
+  assert.match(prompt, /chiffres, prix, rendements, statistiques ou promesses non fournis et sourcés/);
+  assert.match(articleThumbnailProfile(media).tone, /mesure/);
 });
 
 test('environnement: le fichier shadow remplace une variable principale vide', () => {

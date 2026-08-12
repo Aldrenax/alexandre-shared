@@ -11,6 +11,7 @@ import {
   qualifyCandidate,
 } from './candidates.mjs';
 import {
+  ARTICLE_THUMBNAIL_POLICY,
   buildBannerPrompt,
   buildEditorialPrompt,
   EDITORIAL_REVISION,
@@ -523,7 +524,7 @@ export class MediaEngine {
         alt: bannerResult.alt || draft.bannerBrief?.alt || draft.title,
         width: 1_200,
         height: 630,
-        source: 'hermes:image_gen',
+        source: `hermes:image_gen:${ARTICLE_THUMBNAIL_POLICY}`,
       };
     } else if (contentType === 'video' && video?.thumbnailPath) {
       draft.banner = {
@@ -532,6 +533,7 @@ export class MediaEngine {
         width: video.thumbnailWidth || 1_280,
         height: video.thumbnailHeight || 720,
         source: 'youtube-thumbnail',
+        policy: 'associated-video-thumbnail',
       };
     }
 

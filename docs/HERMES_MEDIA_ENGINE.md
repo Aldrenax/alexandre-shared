@@ -35,7 +35,7 @@ Daily et AskOptimize restent dans le registre et dans Telegram, mais
 4. Une rumeur ne déclenche jamais une publication automatique.
 5. Finance, droit, fiscalité et sécurité produit exigent une source officielle.
 6. Une offre ne peut être intégrée que si le registre Studio la marque active, fournit une URL et rattache l'offre au média.
-7. Chaque article doit avoir une bannière locale, une source citée et un registre d'affirmations.
+7. Chaque article doit avoir une bannière locale, une source citée et un registre d'affirmations. Les Actualités et Guides utilisent une adaptation à image unique de `youtube-thumbnail-imagegen`; les articles Vidéos conservent la miniature YouTube associée.
 8. La qualité prévaut sur le quota quotidien.
 9. `publicationMode=draft` est la valeur initiale et sûre.
 10. Un déploiement, une activation de publication ou un push exige une autorisation séparée.
@@ -49,7 +49,7 @@ Daily et AskOptimize restent dans le registre et dans Telegram, mais
 4. Regroupement des sources couvrant le même événement.
 5. Qualification thématique, fraîcheur, preuve et offre.
 6. Rédaction JSON par ChatGPT via Hermes.
-7. Génération d'une bannière avec `image_gen`.
+7. Génération d'une seule bannière avec `image_gen`, selon la politique `youtube-thumbnail-imagegen:article-single-v1`, sans modifier la skill source.
 8. Conversion locale en WebP 1200x630.
 9. QA déterministe.
 10. Écriture d'un brouillon dans `/var/lib/alexandre-media-engine/drafts`.

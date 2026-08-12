@@ -14,6 +14,45 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
 });
 
 export const EDITORIAL_REVISION = 11;
+export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-single-v1';
+
+const ARTICLE_THUMBNAIL_PROFILES = Object.freeze({
+  chaimbault: Object.freeze({
+    palette: 'blanc, gris clair, noir, avec un accent cyan #1394C7 tres mesure',
+    tone: 'credible, net, business et anti-hype',
+  }),
+  'tesla-tech': Object.freeze({
+    palette: 'rouge profond #7F0201 a #A00000, noir et blanc',
+    tone: 'energique, oriente produit et technologie, sans dramatisation artificielle',
+  }),
+  affiliation: Object.freeze({
+    palette: 'jaune et or #C59017 a #F0B020, noir et blanc',
+    tone: 'commercial et dynamique, sans promesse de revenu',
+  }),
+  logiciels: Object.freeze({
+    palette: 'violet #482960 a #604080, blanc et jaune',
+    tone: 'moderne, pratique, logiciel et lisible',
+  }),
+  investissement: Object.freeze({
+    palette: 'vert finance #024F02 a #007000, noir et blanc',
+    tone: 'rassurant, mesure et factuel, sans gain invente',
+  }),
+  entreprise: Object.freeze({
+    palette: 'bleu professionnel #011F61 a #003080 et blanc',
+    tone: 'serieux, rassurant et peu dramatique',
+  }),
+});
+
+export function articleThumbnailProfile(media) {
+  return ARTICLE_THUMBNAIL_PROFILES[media?.slug] || ARTICLE_THUMBNAIL_PROFILES.chaimbault;
+}
+
+function thumbnailDirection(draft) {
+  const text = `${draft?.title || ''} ${draft?.description || ''}`.toLowerCase();
+  if (/piege|piège|attention|risque|arnaque|erreur|limite|rappel|danger/.test(text)) return 'Trap / Truth';
+  if (draft?.contentType === 'guide') return 'Proof / Result';
+  return 'SEO Direct';
+}
 
 function normalizedSlug(value, fallback = '') {
   return String(value || fallback)
@@ -58,7 +97,7 @@ function outputSchema(type) {
     internalLinkSuggestions: [{ anchor: 'string', path: '/...' }],
     offer: null,
     bannerBrief: {
-      headline: '6 mots maximum ou chaîne vide',
+      headline: '2 à 4 mots maximum ou chaîne vide',
       concept: 'description visuelle',
       alt: 'texte alternatif factuel',
       forbidden: ['logos inventés', 'chiffres non sourcés'],
@@ -173,14 +212,24 @@ export function buildEditorialPrompt({
 
 export function buildBannerPrompt({ media, draft }) {
   const brief = draft.bannerBrief || {};
+  const profile = articleThumbnailProfile(media);
   return [
-    `Crée une bannière éditoriale professionnelle pour ${media.name}.`,
-    'Format paysage 16:9, composition compatible avec un recadrage Open Graph 1200x630.',
+    `Applique les principes visuels de la skill youtube-thumbnail-imagegen sans modifier la skill source. Politique: ${ARTICLE_THUMBNAIL_POLICY}.`,
+    `Crée UNE SEULE miniature d'article professionnelle pour ${media.name}.`,
+    'Ne propose pas de variantes et ne génère pas de deuxième image.',
+    'Format paysage 16:9, sortie 1200x630, pensée pour une lecture immédiate sur mobile.',
     `Sujet: ${draft.title}`,
     `Concept: ${brief.concept || draft.description}`,
-    `Texte visible: ${brief.headline || 'aucun texte'}`,
-    'Style: crédible, éditorial, lisible sur mobile, fort contraste, sans esthétique publicitaire agressive.',
-    'Interdictions: logo inventé, faux écran, faux chiffre, faux visage, marque déformée, petit texte illisible.',
+    `Direction: ${thumbnailDirection(draft)}.`,
+    `Palette de chaîne: ${profile.palette}.`,
+    `Ton: ${profile.tone}.`,
+    `Texte visible exact: ${brief.headline || 'aucun texte'}. S'il y a du texte, limite absolue de 2 à 4 mots français.`,
+    'Composition: un seul élément dominant, au maximum un indice secondaire et un seul bloc de texte.',
+    'Privilégie un objet concret, une interface très simplifiée ou un symbole directement lié au sujet.',
+    'Typographie si texte: style Roboto Condensed Bold, capitales, blanc ou jaune, contour noir épais; un seul mot accentué en rouge ou vert si utile.',
+    'Couleurs vives mais contrôlées, contraste fort et fond propre; aucun empilement de cartes, aucun tableau de bord dense.',
+    'Aucun visage: ce flux automatisé ne fournit pas de photo de référence et ne doit jamais inventer les traits d’Alexandre.',
+    'Interdictions: plusieurs idées centrales, petit texte, logo inventé, faux écran, marque déformée, faux visage, chiffres, prix, rendements, statistiques ou promesses non fournis et sourcés.',
     'Utilise l’outil image_gen avec aspect_ratio="landscape".',
     'Après génération, copie sans transformation la valeur `image` retournée par image_gen dans `imageSource`.',
     'Cette valeur peut être une URL, une data URL ou un chemin absolu dans le cache Hermes.',
