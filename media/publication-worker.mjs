@@ -206,6 +206,7 @@ export class PublicationWorker {
         siteConfig.repository, repoPath,
       ], { timeoutMs: 600_000 });
       const publisher = new SitePublisher({ repoPath, media, executeImpl: this.executeImpl });
+      await publisher.prepareWorkspace();
       const staged = publisher.stageDraft(draft);
       await publisher.verifyBuild();
       publisher.auditOutboundLinks(staged.destination, draft);

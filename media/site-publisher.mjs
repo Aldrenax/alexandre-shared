@@ -197,6 +197,13 @@ export class SitePublisher {
     return { destination, publicAssetPath, coverUrl, draft: true };
   }
 
+  async prepareWorkspace() {
+    return this.executeImpl(process.env.NPM_BIN || '/usr/bin/npm', ['ci', '--ignore-scripts'], {
+      cwd: this.repoPath,
+      timeoutMs: 900_000,
+    });
+  }
+
   async verifyBuild() {
     return this.executeImpl(process.env.NPM_BIN || '/usr/bin/npm', ['run', 'build'], {
       cwd: this.repoPath,

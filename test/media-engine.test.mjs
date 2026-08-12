@@ -889,6 +889,22 @@ test('publication: le build ne peut pas injecter une offre commerciale non valid
   assert.deepEqual(rejected.unexpected, ['https://cyberindependant.com/curve?utm_source=alexandre-logiciels']);
 });
 
+test('publication: le site cloné installe ses dépendances avant le build', async () => {
+  const calls = [];
+  const publisher = new (await import('../media/site-publisher.mjs')).SitePublisher({
+    repoPath: '/tmp/alexandre-site-build-test',
+    media: mediaBySlug('logiciels'),
+    executeImpl: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  await publisher.prepareWorkspace();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['ci', '--ignore-scripts']);
+  assert.equal(calls[0].options.cwd, '/tmp/alexandre-site-build-test');
+});
+
 test('publication: fraîcheur immédiate en journée et report au matin pendant la nuit', () => {
   assert.equal(
     recommendedPublicationTime('news', { now: new Date('2026-08-05T10:00:00.000Z') }).toISOString(),
