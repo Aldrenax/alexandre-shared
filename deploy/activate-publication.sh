@@ -9,7 +9,6 @@ if [[ "$(id -u)" -ne 0 ]]; then
   echo "Ce script doit être lancé en root sur le VPS chaimbault." >&2
   exit 1
 fi
-command -v jq >/dev/null || { echo "jq est requis." >&2; exit 1; }
 if ! systemctl is-active --quiet alexandre-media-engine-events.path; then
   echo "Le pont Hermes/Telegram n'est pas actif. Publication refusée." >&2
   exit 1
@@ -27,8 +26,8 @@ preflight="$(
   MEDIA_ENGINE_PUSH_ENABLED=true \
   /usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs preflight --json
 )"
-printf '%s\n' "$preflight" | jq .
-if [[ "$(printf '%s' "$preflight" | jq -r '.readyForPublishing')" != "true" ]]; then
+printf '%s\n' "$preflight"
+if [[ "$(/usr/bin/node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).readyForPublishing === true))' "$preflight")" != "true" ]]; then
   echo "Préflight publication refusé. Aucun timer n'a été modifié." >&2
   exit 1
 fi
@@ -59,7 +58,7 @@ mv -f "$publication_tmp" "$CONFIG_DIR/publication.env"
   --apply \
   --cutover-at "$cutover_at" \
   --news-max-age-hours "${MEDIA_ENGINE_NEWS_MAX_AGE_HOURS:-72}" \
-  --json | jq .
+  --json
 
 systemctl disable --now \
   tesla-tech-news.timer \

@@ -620,28 +620,31 @@ export class MediaEngine {
           results.push({ mediaSlug: media.slug, skipped: true, reason: 'no-unseen-long-video', ignoredShorts: shortsFromFeed.length });
           continue;
         }
-        if (dryRun) {
-          results.push({ mediaSlug: media.slug, planned: true, video: unseen, ignoredShorts: shortsFromFeed.length });
-          continue;
-        }
-        const eventKey = `video-draft:${media.slug}:${unseen.videoId}`;
         const lookbackDays = positiveInteger(this.env.MEDIA_ENGINE_VIDEO_LOOKBACK_DAYS, 7);
         const feedPublishedAt = plausibleVideoDate(unseen.pubDate);
         if (feedPublishedAt && feedPublishedAt.getTime() < Date.now() - lookbackDays * 86_400_000) {
-          this.store.markEvent(eventKey, {
-            status: 'historical-video-skipped',
-            reason: `published-before-${lookbackDays}-day-lookback`,
-            publishedAt: feedPublishedAt.toISOString(),
-          });
+          if (!dryRun) {
+            this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, {
+              status: 'historical-video-skipped',
+              reason: `published-before-${lookbackDays}-day-lookback`,
+              publishedAt: feedPublishedAt.toISOString(),
+            });
+          }
           results.push({
             mediaSlug: media.slug,
             videoId: unseen.videoId,
             skipped: true,
             reason: 'historical-video-outside-lookback',
             publishedAt: feedPublishedAt.toISOString(),
+            dryRun,
           });
           continue;
         }
+        if (dryRun) {
+          results.push({ mediaSlug: media.slug, planned: true, video: unseen, ignoredShorts: shortsFromFeed.length });
+          continue;
+        }
+        const eventKey = `video-draft:${media.slug}:${unseen.videoId}`;
         const info = await this.getVideoInfo(unseen.videoId);
         if (info.isShort || info.isLive) {
           this.store.markEvent(`video-draft:${media.slug}:${unseen.videoId}`, { status: 'ignored-short-or-live' });
