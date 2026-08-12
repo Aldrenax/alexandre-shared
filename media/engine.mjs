@@ -549,16 +549,29 @@ export class MediaEngine {
       try {
         const feed = await this.getChannelFeed(media.channelId);
         const mediaLinks = this.internalLinks[media.slug] || [];
+        const eventPrefix = `video-draft:${media.slug}:`;
+        const persistedBacklog = Object.entries(this.store.read('events', { events: {} }).events || {})
+          .filter(([key]) => key.startsWith(eventPrefix) && shouldGenerateDraftForEvent(this.store, key))
+          .map(([key, event]) => ({
+            videoId: key.slice(eventPrefix.length),
+            title: event?.title || null,
+            link: `https://www.youtube.com/watch?v=${key.slice(eventPrefix.length)}`,
+            retrySource: 'persisted-backlog',
+            eventAt: event?.at || null,
+          }))
+          .filter((entry) => entry.videoId)
+          .sort((left, right) => (Date.parse(left.eventAt) || 0) - (Date.parse(right.eventAt) || 0));
         const alreadyPublished = feed.filter((entry) => publishedVideoPath(mediaLinks, entry.videoId));
+        const backlogAlreadyPublished = persistedBacklog.filter((entry) => publishedVideoPath(mediaLinks, entry.videoId));
         if (!dryRun) {
-          for (const entry of alreadyPublished) {
+          for (const entry of [...alreadyPublished, ...backlogAlreadyPublished]) {
             this.store.markEvent(`video-draft:${media.slug}:${entry.videoId}`, {
               status: 'already-published',
               path: publishedVideoPath(mediaLinks, entry.videoId),
             });
           }
         }
-        const publishedIds = new Set(alreadyPublished.map((entry) => entry.videoId));
+        const publishedIds = new Set([...alreadyPublished, ...backlogAlreadyPublished].map((entry) => entry.videoId));
         const pending = feed.filter((entry) => !publishedIds.has(entry.videoId)
           && shouldGenerateDraftForEvent(this.store, `video-draft:${media.slug}:${entry.videoId}`));
         const shortsFromFeed = pending.filter((entry) => String(entry.link || '').includes('/shorts/'));
@@ -567,7 +580,14 @@ export class MediaEngine {
             this.store.markEvent(`video-draft:${media.slug}:${short.videoId}`, { status: 'ignored-short-or-live', source: 'youtube-rss' });
           }
         }
-        unseen = pending.find((entry) => !String(entry.link || '').includes('/shorts/')) || null;
+        const retryBacklog = persistedBacklog.filter((entry) => !publishedIds.has(entry.videoId));
+        const candidateIds = new Set();
+        const candidates = [...retryBacklog, ...pending].filter((entry) => {
+          if (candidateIds.has(entry.videoId)) return false;
+          candidateIds.add(entry.videoId);
+          return true;
+        });
+        unseen = candidates.find((entry) => !String(entry.link || '').includes('/shorts/')) || null;
         if (!unseen) {
           results.push({ mediaSlug: media.slug, skipped: true, reason: 'no-unseen-long-video', ignoredShorts: shortsFromFeed.length });
           continue;

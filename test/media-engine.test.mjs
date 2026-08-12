@@ -288,6 +288,23 @@ test('cycle vidéo: une panne est isolée et reçoit un délai de reprise', asyn
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:investissement:broken-1'), false);
 });
 
+test('cycle vidéo: une reprise persistée survit à la disparition de la vidéo du RSS', async () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-video-persisted-retry-')));
+  store.markEvent('video-draft:chaimbault:olderVideo123', {
+    status: 'retryable-failure',
+    reason: 'ancienne panne transitoire',
+    nextRetryAt: new Date(Date.now() - 60_000).toISOString(),
+  });
+  const engine = new MediaEngine({
+    store,
+    getChannelFeedImpl: async () => [],
+  });
+  const result = await engine.runVideoCycle({ mediaSlug: 'chaimbault', dryRun: true });
+  assert.equal(result[0].planned, true);
+  assert.equal(result[0].video.videoId, 'olderVideo123');
+  assert.equal(result[0].video.retrySource, 'persisted-backlog');
+});
+
 test('cycle vidéo: une transcription absente demande les sous-titres au Studio sans toucher OAuth', async () => {
   const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-caption-request-')));
   const engine = new MediaEngine({
