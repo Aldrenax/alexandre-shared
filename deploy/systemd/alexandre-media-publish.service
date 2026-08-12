@@ -11,6 +11,7 @@ WorkingDirectory=/opt/alexandre-media-engine/current
 EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
 EnvironmentFile=-/etc/alexandre-media-engine/shadow.env
 EnvironmentFile=-/etc/alexandre-media-engine/publication.env
+Environment=NPM_CONFIG_CACHE=/var/lib/alexandre-media-engine/npm-cache
 ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs publish --limit 1 --json
 TimeoutStartSec=45min
 UMask=0027

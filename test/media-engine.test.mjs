@@ -907,6 +907,12 @@ test('publication: le site cloné installe ses dépendances avant le build', asy
   assert.equal(calls[0].options.cwd, '/tmp/alexandre-site-build-test');
 });
 
+test('publication VPS: npm utilise le cache runtime autorisé par systemd', () => {
+  const unit = readFileSync(new URL('../deploy/systemd/alexandre-media-publish.service', import.meta.url), 'utf8');
+  assert.match(unit, /^Environment=NPM_CONFIG_CACHE=\/var\/lib\/alexandre-media-engine\/npm-cache$/m);
+  assert.match(unit, /^ReadWritePaths=.*\/var\/lib\/alexandre-media-engine(?:\s|$)/m);
+});
+
 test('publication: fraîcheur immédiate en journée et report au matin pendant la nuit', () => {
   assert.equal(
     recommendedPublicationTime('news', { now: new Date('2026-08-05T10:00:00.000Z') }).toISOString(),
