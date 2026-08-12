@@ -1,6 +1,7 @@
 import {
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
 } from 'node:fs';
@@ -143,6 +144,54 @@ export class PublicationWorker {
       .filter((receipt) => Number.isFinite(Date.parse(receipt.publishedAt)));
   }
 
+  unverifiedReceiptPaths() {
+    const root = join(this.store.stateDir, 'publication-receipts');
+    if (!existsSync(root)) return [];
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => {
+        const directory = join(root, entry.name);
+        return readdirSync(directory, { withFileTypes: true })
+          .filter((file) => file.isFile() && file.name.endsWith('.json'))
+          .map((file) => join(directory, file.name));
+      })
+      .sort();
+  }
+
+  async reconcileUnverified({ dryRun = false, limit = 10 } = {}) {
+    const results = [];
+    for (const receiptPath of this.unverifiedReceiptPaths()) {
+      if (results.length >= limit) break;
+      const receipt = readJson(receiptPath, null);
+      if (!receipt || receipt.status !== 'pushed-unverified' || !receipt.publicUrl) continue;
+      const draft = readJson(receipt.draftPath, {});
+      const live = await this.verifyLive(receipt.publicUrl, draft.title, { attempts: 1, intervalMs: 0 });
+      if (!live.verified || dryRun) {
+        results.push({ receiptPath, status: receipt.status, live, dryRun });
+        continue;
+      }
+      const verifiedReceipt = { ...receipt, status: 'published', live, verifiedAt: this.now().toISOString() };
+      writeJsonAtomic(receiptPath, verifiedReceipt);
+      this.store.markEvent(
+        `published:${receipt.mediaSlug}:${receipt.contentType}:${receipt.slug}`,
+        verifiedReceipt,
+      );
+      this.store.enqueue(
+        'events',
+        `publication-verified-${receipt.mediaSlug}-${receipt.contentType}-${receipt.slug}`,
+        {
+          type: 'editorial.article.published',
+          createdAt: this.now().toISOString(),
+          ...verifiedReceipt,
+          bannerPath: draft.banner?.path || null,
+          title: draft.title || null,
+        },
+      );
+      results.push({ receiptPath, status: 'published', live, dryRun: false });
+    }
+    return { inspected: this.unverifiedReceiptPaths().length, results };
+  }
+
   queueBlockersFor(draft, receipts = this.publicationReceipts()) {
     const blockers = [];
     const now = this.now();
@@ -282,6 +331,7 @@ export class PublicationWorker {
     const lease = dryRun ? null : this.store.acquireLease('publication-cycle', { ttlMs: 50 * 60_000 });
     if (!dryRun && !lease) return { skipped: true, reason: 'publication-lease-active', inspected: 0, heldCount: 0, held: [], results: [] };
     try {
+    const reconciliation = await this.reconcileUnverified({ dryRun });
     const paths = this.store.listDraftPaths(mediaSlug);
     const results = [];
     const held = [];
@@ -309,7 +359,7 @@ export class PublicationWorker {
       results.push(published);
       if (!dryRun && published?.publishedAt) receipts.push(published);
     }
-      return { inspected: paths.length, heldCount: held.length, held: held.slice(0, 25), results };
+      return { inspected: paths.length, reconciliation, heldCount: held.length, held: held.slice(0, 25), results };
     } finally {
       if (lease) this.store.releaseLease(lease);
     }

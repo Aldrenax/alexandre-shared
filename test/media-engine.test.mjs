@@ -1077,6 +1077,45 @@ test('publication automatique: un lease interdit deux workers simultanés', asyn
   store.releaseLease(lease);
 });
 
+test('publication automatique: un push Cloudflare tardif est réconcilié et notifié comme publié', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-publication-reconcile-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const draftPath = store.saveDraft('entreprise', {
+    candidateId: 'qonto-guide',
+    mediaSlug: 'entreprise',
+    contentType: 'guide',
+    slug: 'qonto-guide',
+    title: 'Guide Qonto vérifié',
+    banner: { path: '/tmp/qonto.webp' },
+  });
+  const receiptPath = join(store.stateDir, 'publication-receipts', 'entreprise', 'qonto-guide.json');
+  mkdirSync(join(store.stateDir, 'publication-receipts', 'entreprise'), { recursive: true });
+  writeFileSync(receiptPath, JSON.stringify({
+    status: 'pushed-unverified',
+    publishedAt: '2026-08-12T14:23:24.495Z',
+    mediaSlug: 'entreprise',
+    contentType: 'guide',
+    slug: 'qonto-guide',
+    draftPath,
+    publicUrl: 'https://alexandre-entreprise.fr/guides/qonto-guide',
+    commit: 'abc123',
+  }));
+  store.markEvent('published:entreprise:guide:qonto-guide', JSON.parse(readFileSync(receiptPath, 'utf8')));
+  const worker = new PublicationWorker({
+    store,
+    fetchImpl: async () => new Response('<title>Guide Qonto vérifié</title>', { status: 200 }),
+    now: () => new Date('2026-08-12T14:25:00.000Z'),
+  });
+  const reconciliation = await worker.reconcileUnverified();
+  assert.equal(reconciliation.results[0].status, 'published');
+  assert.equal(JSON.parse(readFileSync(receiptPath, 'utf8')).live.verified, true);
+  const eventPath = join(store.queueDir, 'events', 'publication-verified-entreprise-guide-qonto-guide.json');
+  const event = JSON.parse(readFileSync(eventPath, 'utf8'));
+  assert.equal(event.type, 'editorial.article.published');
+  assert.equal(event.title, 'Guide Qonto vérifié');
+});
+
 test('supervision: un état jamais observé crée une seule alerte explicite par jour', () => {
   const root = mkdtempSync(join(tmpdir(), 'media-monitor-'));
   const store = new MediaStateStore(root);
