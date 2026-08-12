@@ -23,6 +23,18 @@ git -C "$SOURCE_DIR" archive HEAD | tar -x -C "$RELEASE_DIR"
 ln -sfn "$RELEASE_DIR" "$RELEASE_ROOT/current.next"
 mv -Tf "$RELEASE_ROOT/current.next" "$RELEASE_ROOT/current"
 
+# Conserver un rollback récent sans remplir progressivement le VPS.
+mapfile -t stale_releases < <(
+  find "$RELEASE_ROOT/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+    | sort -nr \
+    | tail -n +7 \
+    | cut -d' ' -f2-
+)
+for stale_release in "${stale_releases[@]}"; do
+  [[ "$stale_release" == "$RELEASE_DIR" ]] && continue
+  rm -rf -- "$stale_release"
+done
+
 if [[ ! -e "$CONFIG_DIR/media-engine.env" ]]; then
   install -m 0640 "$SOURCE_DIR/deploy/media-engine.env.example" "$CONFIG_DIR/media-engine.env"
 fi
