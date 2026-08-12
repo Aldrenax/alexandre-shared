@@ -2,25 +2,11 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { MediaEngine } from '../media/engine.mjs';
+import { loadEnvironmentFile } from '../media/environment.mjs';
 import { applyDraftCuration, curateDraftQueue } from '../media/draft-curation.mjs';
 import { loadSiteConfigs, PublicationWorker } from '../media/publication-worker.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { registrySnapshot, validateRegistry } from '../media/registry.mjs';
-
-function loadEnvironmentFile(path) {
-  if (!existsSync(path)) return;
-  for (const rawLine of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match || process.env[match[1]] !== undefined) continue;
-    let value = match[2].trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    process.env[match[1]] = value;
-  }
-}
 
 // Les commandes opérateur et les heartbeats appellent aussi le CLI hors
 // systemd. Charger les mêmes fichiers garantit un préflight fidèle, notamment

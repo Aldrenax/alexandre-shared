@@ -21,6 +21,7 @@ import {
 import { curateDraftQueue } from '../media/draft-curation.mjs';
 import { collectSource, enrichCandidateEvidence, extractBalancedEvidence, extractReadableText } from '../media/source-collector.mjs';
 import { defaultHermesCommand, HermesClient, parseJsonPayload } from '../media/hermes-client.mjs';
+import { loadEnvironmentFile } from '../media/environment.mjs';
 import { buildEditorialPrompt, normalizeDraft } from '../media/editorial.mjs';
 import { publicationDecision, qaDraft } from '../media/qa.mjs';
 import { MediaStateStore } from '../media/state-store.mjs';
@@ -54,6 +55,19 @@ test('registre: huit chaînes, six médias éditoriaux et sources officielles', 
   }
   assert.equal(mediaBySlug('daily').editorialEnabled, false);
   assert.equal(mediaBySlug('askoptimize').editorialEnabled, false);
+});
+
+test('environnement: le fichier shadow remplace une variable principale vide', () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-env-layer-'));
+  const main = join(root, 'main.env');
+  const shadow = join(root, 'shadow.env');
+  writeFileSync(main, 'MEDIA_ENGINE_SHADOW_STARTED_AT=\nMEDIA_ENGINE_PUBLICATION_MODE=draft\n');
+  writeFileSync(shadow, 'MEDIA_ENGINE_SHADOW_STARTED_AT=2026-08-05T14:15:56Z\nMEDIA_ENGINE_PUBLICATION_MODE=automatic\n');
+  const env = {};
+  loadEnvironmentFile(main, env);
+  loadEnvironmentFile(shadow, env);
+  assert.equal(env.MEDIA_ENGINE_SHADOW_STARTED_AT, '2026-08-05T14:15:56Z');
+  assert.equal(env.MEDIA_ENGINE_PUBLICATION_MODE, 'draft');
 });
 
 test('santé: une source officielle complémentaire indisponible ne bloque pas le réseau', () => {
