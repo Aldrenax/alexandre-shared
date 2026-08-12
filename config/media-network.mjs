@@ -227,7 +227,7 @@ export const MEDIA_SOURCES = Object.freeze([
   source({ id: 'abondance', name: 'Abondance', type: 'rss', url: 'https://www.abondance.com/feed', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'webrankinfo', name: 'WebRankInfo', type: 'rss', url: 'https://www.webrankinfo.com/dossiers/feed', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'search-engine-journal', name: 'Search Engine Journal', type: 'rss', url: 'https://www.searchenginejournal.com/feed/', tier: 2, official: false, media: ['affiliation'] }),
-  source({ id: 'search-engine-watch', name: 'Search Engine Watch', type: 'rss', url: 'https://searchenginewatch.com/feed/', tier: 2, official: false, media: ['affiliation'] }),
+  source({ id: 'search-engine-watch', name: 'Search Engine Watch', type: 'rss', required: false, url: 'https://searchenginewatch.com/feed/', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'moz-blog', name: 'Moz Blog', type: 'rss', url: 'https://moz.com/posts/rss/blog', tier: 2, official: false, media: ['affiliation'] }),
 
   // Logiciels

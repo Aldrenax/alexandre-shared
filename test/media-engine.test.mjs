@@ -94,6 +94,11 @@ test('santé: une source officielle complémentaire indisponible ne bloque pas l
   assert.ok(!health.blockers.includes('required-sources-degraded'));
 });
 
+test('santé: Search Engine Watch reste un complément non bloquant aux sources SEO', () => {
+  const searchEngineWatch = MEDIA_SOURCES.find((source) => source.id === 'search-engine-watch');
+  assert.equal(searchEngineWatch.required, false);
+});
+
 test('transcription YouTube: le proxy protégé est transmis à yt-dlp sans valeur par défaut', () => {
   assert.deepEqual(ytDlpNetworkEnv({ SAFE: 'yes' }), { SAFE: 'yes' });
   const env = ytDlpNetworkEnv({ HTTP_PROXY_URL: '  http://proxy.example:8080  ' }, 'abcd1234');
