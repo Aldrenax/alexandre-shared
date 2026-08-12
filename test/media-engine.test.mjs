@@ -878,6 +878,8 @@ test('publication: le build ne peut pas injecter une offre commerciale non valid
     '[Source](https://openai.com/index/annonce)',
     '[Offre](https://cyberindependant.com/hostinger?utm_source=alexandre-logiciels&utm_medium=article)',
     '[Interne](https://alexandre-logiciels.fr/guides/hebergement)',
+    '[Hub](https://alexandrechaimbault.com)',
+    '[Formation](https://formations.alexandrechaimbault.com/f/youtube-expert)',
   ].join('\n'), draft, media);
   assert.equal(accepted.passed, true);
 

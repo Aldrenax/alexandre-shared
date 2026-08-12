@@ -65,7 +65,11 @@ export function auditDraftOutboundLinks(content, draft, media) {
     draft.video?.url,
     draft.video?.thumbnailUrl,
   ].filter(Boolean).map(normalizedComparableUrl).filter(Boolean));
-  const internalOrigin = new URL(media.siteUrl).origin;
+  const networkOrigins = new Set([
+    new URL(media.siteUrl).origin,
+    'https://alexandrechaimbault.com',
+    'https://formations.alexandrechaimbault.com',
+  ]);
   const allowedVideoHosts = new Set(['youtube.com', 'youtu.be', 'youtube-nocookie.com']);
   const unexpected = [];
   for (const raw of extractHttpUrls(content)) {
@@ -73,7 +77,7 @@ export function auditDraftOutboundLinks(content, draft, media) {
     if (!normalized) continue;
     const url = new URL(normalized);
     const host = url.hostname.replace(/^www\./, '');
-    if (url.origin === internalOrigin || allowedVideoHosts.has(host) || allowedExact.has(normalized)) continue;
+    if (networkOrigins.has(url.origin) || allowedVideoHosts.has(host) || allowedExact.has(normalized)) continue;
     unexpected.push(raw);
   }
   return {
