@@ -27,6 +27,7 @@ import {
   articleThumbnailProfile,
   buildBannerPrompt,
   buildEditorialPrompt,
+  buildEditorialRepairPrompt,
   EDITORIAL_REVISION,
   normalizeDraft,
 } from '../media/editorial.mjs';
@@ -42,6 +43,7 @@ import {
   MediaEngine,
   offerForUrl,
   publishedVideoPath,
+  qaCanBeRepaired,
   shouldGenerateDraftForEvent,
   transcriptBlockNeedsCaption,
   videoDraftReceipt,
@@ -795,6 +797,70 @@ test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
   }).allowed, true);
 });
 
+test('rédaction: une petite erreur QA déclenche une seule réparation bornée', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-qa-repair-'));
+  const thumbnailPath = join(root, 'thumbnail.jpg');
+  writeFileSync(thumbnailPath, Buffer.alloc(12_000, 1));
+  const sourceUrl = 'https://www.youtube.com/watch?v=repairVideo1';
+  const title = 'Croire en l’exponentielle pour développer son activité';
+  const candidate = {
+    id: 'youtube-repairVideo1',
+    mediaSlug: 'chaimbault',
+    title,
+    primaryUrl: sourceUrl,
+    score: 100,
+    status: 'qualified',
+    corroborated: true,
+    rumor: false,
+    sources: [{ sourceId: 'youtube-chaimbault', tier: 0, official: true, title, url: sourceUrl }],
+    offer: null,
+  };
+  const payload = (wordCount) => ({
+    title,
+    slug: 'croire-en-lexponentielle-pour-developper-son-activite',
+    description: 'Une analyse détaillée et fidèle de la vidéo pour comprendre la croissance exponentielle appliquée à une activité.',
+    body: `## Analyse\n\n[Voir la vidéo](${sourceUrl})\n\n${'explication '.repeat(wordCount)}`,
+    category: 'analyse',
+    tags: ['business'],
+    keyPoints: ['Comprendre la progression'],
+    faq: [],
+    sourceUrls: [sourceUrl],
+    claims: [{ statement: 'La vidéo présente une progression exponentielle', sourceRefs: ['S1'] }],
+    bannerBrief: { headline: '', concept: 'Courbe de progression', alt: 'Courbe de progression exponentielle' },
+  });
+  const prompts = [];
+  const engine = new MediaEngine({
+    store: new MediaStateStore(root),
+    env: { MEDIA_ENGINE_QA_REPAIR_ATTEMPTS: '1' },
+    hermes: {
+      generateEditorialJson: async (prompt) => {
+        prompts.push(prompt);
+        return prompts.length === 1 ? payload(1_850) : payload(2_100);
+      },
+    },
+  });
+  const draft = await engine.generateDraft(candidate, {
+    contentType: 'video',
+    video: { videoId: 'repairVideo1', title, url: sourceUrl, thumbnailPath, thumbnailAlt: title },
+    generateBanner: false,
+  });
+
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /RÉPARATION QA BORNÉE/);
+  assert.equal(draft.qa.passed, true);
+  assert.deepEqual(draft.qaRepair.initialIssueCodes, ['word-count-low']);
+  assert.equal(draft.qaRepair.attempts, 1);
+  assert.equal(draft.qaRepair.resolved, true);
+  assert.equal(qaCanBeRepaired({ issues: [{ code: 'word-count-low', severity: 'error' }] }), true);
+  assert.equal(qaCanBeRepaired({ issues: [{ code: 'rumor-blocked', severity: 'error' }] }), false);
+
+  const repairPrompt = buildEditorialRepairPrompt({
+    media: mediaBySlug('chaimbault'), candidate, contentType: 'video', draft, qa: draft.qa,
+  });
+  assert.match(repairPrompt, /N’ajoute aucun fait/);
+  assert.match(repairPrompt, new RegExp(title));
+});
+
 test('rédaction vidéo: la source YouTube et l’offre exacte sont injectées sans dépendre du modèle', () => {
   const media = mediaBySlug('investissement');
   const candidate = {
@@ -913,6 +979,7 @@ test('publication: le build ne peut pas injecter une offre commerciale non valid
     '[Interne](https://alexandre-logiciels.fr/guides/hebergement)',
     '[Hub](https://alexandrechaimbault.com)',
     '[Formation](https://formations.alexandrechaimbault.com/f/youtube-expert)',
+    '[Agence](https://askoptimize.com)',
   ].join('\n'), draft, media);
   assert.equal(accepted.passed, true);
 

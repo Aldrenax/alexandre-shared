@@ -14,6 +14,7 @@ import {
   ARTICLE_THUMBNAIL_POLICY,
   buildBannerPrompt,
   buildEditorialPrompt,
+  buildEditorialRepairPrompt,
   EDITORIAL_REVISION,
   normalizeDraft,
 } from './editorial.mjs';
@@ -51,6 +52,37 @@ function xItems(result, media) {
 function positiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const REPAIRABLE_QA_ISSUES = new Set([
+  'word-count-low',
+  'description-invalid',
+  'h1-forbidden',
+  'typography-dash',
+  'section-invalid',
+  'category-invalid',
+  'guide-topic-invalid',
+  'source-link-missing',
+  'claims-missing',
+  'claim-empty',
+  'claim-unsourced',
+  'claim-source-unknown',
+  'finance-disclaimer-missing',
+  'capital-risk-missing',
+  'legal-tax-disclaimer-missing',
+  'affiliate-disclosure-missing',
+  'affiliate-link-missing',
+]);
+
+export function qaCanBeRepaired(qa) {
+  const errors = (qa?.issues || []).filter((entry) => entry.severity === 'error');
+  return errors.length > 0 && errors.every((entry) => REPAIRABLE_QA_ISSUES.has(entry.code));
+}
+
+function qaRepairLimit(env = process.env) {
+  const parsed = Number.parseInt(env.MEDIA_ENGINE_QA_REPAIR_ATTEMPTS ?? '1', 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(2, Math.max(0, parsed));
 }
 
 function plausibleVideoDate(value, now = Date.now()) {
@@ -512,6 +544,44 @@ export class MediaEngine {
     let draft = normalizeDraft(payload, { contentType, candidate, media });
     if (draft.status === 'blocked') return draft;
     if (contentType === 'video') draft.video = video;
+
+    const initialQa = qaDraft(draft, media, { candidate, requireBanner: false });
+    let textQa = initialQa;
+    let repairAttempts = 0;
+    let repairError = null;
+    const repairLimit = qaRepairLimit(this.env);
+    while (!textQa.passed && repairAttempts < repairLimit && qaCanBeRepaired(textQa)) {
+      repairAttempts += 1;
+      try {
+        const repairPayload = await this.hermes.generateEditorialJson(buildEditorialRepairPrompt({
+          media,
+          candidate,
+          contentType,
+          draft,
+          qa: textQa,
+        }), { contentType });
+        const repairedDraft = normalizeDraft(repairPayload, { contentType, candidate, media });
+        if (repairedDraft.status === 'blocked') {
+          repairError = repairedDraft.reason || 'repair-blocked';
+          break;
+        }
+        draft = repairedDraft;
+        if (contentType === 'video') draft.video = video;
+        textQa = qaDraft(draft, media, { candidate, requireBanner: false });
+      } catch (error) {
+        repairError = String(error?.message || error);
+        break;
+      }
+    }
+    draft.qaRepair = {
+      attempted: repairAttempts > 0,
+      attempts: repairAttempts,
+      limit: repairLimit,
+      resolved: textQa.passed,
+      initialIssueCodes: initialQa.issues.filter((entry) => entry.severity === 'error').map((entry) => entry.code),
+      remainingIssueCodes: textQa.issues.filter((entry) => entry.severity === 'error').map((entry) => entry.code),
+      error: repairError,
+    };
 
     if (generateBanner && contentType !== 'video') {
       const bannerResult = await this.hermes.generateBannerJson(buildBannerPrompt({ media, draft }));
