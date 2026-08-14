@@ -47,6 +47,102 @@ test('registre sources: Google Search Central utilise le RSS officiel', () => {
   assert.equal(googleSearchBlog.url, 'https://developers.google.com/search/blog/feed.xml');
 });
 
+test('registre sources: les flux officiels complémentaires sont RSS et optionnels', () => {
+  const googleSearchStatus = MEDIA_SOURCES.find((source) => source.id === 'google-search-status');
+  const economieActualites = MEDIA_SOURCES.find((source) => source.id === 'economie-actualites');
+  const bofip = MEDIA_SOURCES.find((source) => source.id === 'bofip-rss');
+
+  assert.deepEqual(
+    [googleSearchStatus, economieActualites, bofip].map((source) => ({
+      type: source.type,
+      required: source.required,
+      official: source.official,
+    })),
+    [
+      { type: 'rss', required: false, official: true },
+      { type: 'rss', required: false, official: true },
+      { type: 'rss', required: false, official: true },
+    ],
+  );
+  assert.equal(googleSearchStatus.url, 'https://status.search.google.com/en/feed.atom?hl=fr');
+  assert.equal(economieActualites.url, 'https://www.economie.gouv.fr/rss/toutesactualites');
+  assert.equal(bofip.url, 'https://bofip.impots.gouv.fr/bofip/ext/rss/last-rss.xml');
+});
+
+test('registre sources: Search Engine Land reste une source secondaire optionnelle', () => {
+  const source = MEDIA_SOURCES.find((entry) => entry.id === 'search-engine-land');
+
+  assert.equal(source.type, 'rss');
+  assert.equal(source.url, 'https://searchengineland.com/feed');
+  assert.equal(source.tier, 2);
+  assert.equal(source.official, false);
+  assert.equal(source.required, false);
+  assert.deepEqual(source.media, ['affiliation']);
+});
+
+test('collecteur RSS BOFiP: infère la date depuis la description puis le suffixe URL', async () => {
+  const source = MEDIA_SOURCES.find((entry) => entry.id === 'bofip-rss');
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><title>BOFiP</title>
+      <item>
+        <guid>description</guid>
+        <title>TVA - Nouvelle règle pour les entreprises</title>
+        <link>https://bofip.impots.gouv.fr/bofip/1-PGP.html/identifiant=BOI-TVA-20260812</link>
+        <description>Doctrine mise à jour (identifiant juridique BOI-TVA; publié le 13/08/2026)</description>
+      </item>
+      <item>
+        <guid>suffixe</guid>
+        <title>IS - Obligations déclaratives des sociétés</title>
+        <link>https://bofip.impots.gouv.fr/bofip/2-PGP.html/identifiant=BOI-IS-20260812</link>
+        <description>Doctrine mise à jour sans date explicite</description>
+      </item>
+    </channel></rss>`;
+  const response = {
+    ok: true,
+    status: 200,
+    url: source.url,
+    headers: new Headers({ 'content-type': 'application/rss+xml' }),
+    text: async () => xml,
+  };
+
+  const collected = await collectSource(source, { fetchImpl: async () => response });
+
+  assert.equal(collected.items[0].publishedAt, '2026-08-13T00:00:00.000Z');
+  assert.equal(collected.items[1].publishedAt, '2026-08-12T00:00:00.000Z');
+});
+
+test('collecteur RSS: ne déduit aucune date BOFiP hors source ou depuis une date invalide', async () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><title>Test</title>
+      <item>
+        <guid>date-invalide</guid>
+        <title>TVA - Information sans date valide</title>
+        <link>https://example.test/article-20260231</link>
+        <description>Information publiée le 31/02/2026</description>
+      </item>
+    </channel></rss>`;
+  const response = {
+    ok: true,
+    status: 200,
+    url: 'https://example.test/feed.xml',
+    headers: new Headers({ 'content-type': 'application/rss+xml' }),
+    text: async () => xml,
+  };
+  const otherSource = {
+    id: 'other-rss', name: 'Autre RSS', type: 'rss', url: response.url,
+    tier: 0, official: true, media: ['entreprise'],
+  };
+  const bofipSource = { ...otherSource, id: 'bofip-rss' };
+
+  const [other, bofip] = await Promise.all([
+    collectSource(otherSource, { fetchImpl: async () => response }),
+    collectSource(bofipSource, { fetchImpl: async () => response }),
+  ]);
+
+  assert.equal(other.items[0].publishedAt, null);
+  assert.equal(bofip.items[0].publishedAt, null);
+});
+
 test('collecteur API NHTSA: les dates jour-mois sont interprétées sans ambiguïté', async () => {
   const source = {
     id: 'nhtsa-recalls',

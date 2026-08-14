@@ -107,6 +107,34 @@ function validDayFirstDate(value, fallback = null) {
   return date.toISOString();
 }
 
+function validCompactDate(value, fallback = null) {
+  const match = String(value || '').trim().match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (!match) return fallback;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return fallback;
+  }
+  return date.toISOString();
+}
+
+function rssPublishedAt(item, source) {
+  const declared = validDate(item.isoDate || item.pubDate);
+  if (declared || source.id !== 'bofip-rss') return declared;
+
+  const description = decodeHtml(item.contentSnippet || item.summary || item.content || '');
+  const describedDate = description.match(/publi(?:é|e) le\s+(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
+  if (describedDate) {
+    const inferred = validDayFirstDate(describedDate);
+    if (inferred) return inferred;
+  }
+
+  const compactSuffix = String(item.link || '').match(/(?:-|=)(\d{8})(?:[/?#]|$)/)?.[1];
+  return validCompactDate(compactSuffix);
+}
+
 function requestHeaders(previous = {}) {
   const headers = {
     Accept: 'application/rss+xml, application/atom+xml, application/json, text/html, */*;q=0.5',
@@ -143,7 +171,7 @@ async function parseRss(text, source) {
     title: decodeHtml(item.title),
     url: item.link || '',
     excerpt: decodeHtml(item.contentSnippet || item.summary || item.content || '').slice(0, 1_200),
-    publishedAt: validDate(item.isoDate || item.pubDate),
+    publishedAt: rssPublishedAt(item, source),
     author: decodeHtml(item.creator || item.author || ''),
     media: source.media,
     kind: 'news',

@@ -7,6 +7,7 @@ import { applyDraftCuration, curateDraftQueue } from '../media/draft-curation.mj
 import { loadSiteConfigs, PublicationWorker } from '../media/publication-worker.mjs';
 import { runPreflight } from '../media/preflight.mjs';
 import { registrySnapshot, validateRegistry } from '../media/registry.mjs';
+import { classifyRunOutcome } from '../media/run-outcome.mjs';
 
 // Les commandes opérateur et les heartbeats appellent aussi le CLI hors
 // systemd. Charger les mêmes fichiers garantit un préflight fidèle, notamment
@@ -109,40 +110,9 @@ try {
   }
   if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'run'].includes(command)) {
     engine.store.initialize();
-    const failedEntries = command === 'video' && Array.isArray(result)
-      ? result.filter((entry) => entry?.failed)
-      : [];
-    const scheduledRetries = command === 'video' && Array.isArray(result)
-      ? result.filter((entry) => entry?.retryScheduled)
-      : [];
-    const newsRetries = command === 'run' && Array.isArray(result?.attempts)
-      ? result.attempts.filter((entry) => entry?.status === 'retryable-failure')
-      : [];
-    const newsQaFailures = command === 'run' && Array.isArray(result?.attempts)
-      ? result.attempts.filter((entry) => entry?.status === 'qa-failed')
-      : [];
-    const status = failedEntries.length || newsQaFailures.length
-      ? 'degraded'
-      : scheduledRetries.length || newsRetries.length
-        ? 'warning'
-        : 'success';
-    engine.store.recordRun(command, {
-      status,
-      mediaSlug: mediaSlug || null,
-      ...(failedEntries.length ? {
-        failures: failedEntries.map((entry) => ({ mediaSlug: entry.mediaSlug, videoId: entry.videoId, error: entry.error || entry.reason })),
-      } : {}),
-      ...(scheduledRetries.length ? {
-        scheduledRetries: scheduledRetries.map((entry) => ({ mediaSlug: entry.mediaSlug, videoId: entry.videoId, reason: entry.error || entry.reason })),
-      } : {}),
-      ...(newsRetries.length ? {
-        candidateRetries: newsRetries.map((entry) => ({ mediaSlug: entry.mediaSlug, candidateId: entry.candidateId, reason: entry.reason })),
-      } : {}),
-      ...(newsQaFailures.length ? {
-        qaFailures: newsQaFailures.map((entry) => ({ mediaSlug: entry.mediaSlug, candidateId: entry.candidateId, reason: entry.reason })),
-      } : {}),
-    });
-    if (failedEntries.length) process.exitCode = 1;
+    const outcome = classifyRunOutcome(command, result, { mediaSlug: mediaSlug || null });
+    engine.store.recordRun(command, outcome.receipt);
+    if (outcome.failed) process.exitCode = 1;
   }
 } catch (error) {
   if (!dryRun) {

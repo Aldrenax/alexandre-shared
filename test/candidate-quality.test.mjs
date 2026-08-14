@@ -226,3 +226,40 @@ test('taxonomie: GPT et les paiements BCE sont reconnus sans sous-chaîne ambigu
   assert.ok(finance.keywordMatches.includes('cash'));
   assert.equal(finance.officialRequired, true);
 });
+
+test("taxonomie entreprise: C3IV et crédit d'impôt sont ciblés sans ouvrir l'impôt sur le revenu", () => {
+  const official = (title, url) => ({
+    id: url,
+    title,
+    primaryUrl: url,
+    publishedAt: '2026-08-13T16:28:36.000Z',
+    sources: [{
+      sourceId: 'economie-actualites', tier: 0, official: true, title, url,
+      excerpt: title, publishedAt: '2026-08-13T16:28:36.000Z',
+    }],
+  });
+  const targetMedia = mediaBySlug('entreprise');
+  const c3iv = qualifyCandidate(
+    official(
+      "Tout savoir sur le crédit d'impôt au titre des investissements dans l’industrie verte (C3IV)",
+      'https://www.economie.gouv.fr/entreprises/c3iv',
+    ),
+    targetMedia,
+    { now: NOW },
+  );
+  assert.equal(c3iv.status, 'qualified');
+  assert.ok(c3iv.keywordMatches.includes('crédit d’impôt'));
+  assert.ok(c3iv.keywordMatches.includes('C3IV'));
+
+  const incomeTax = qualifyCandidate(
+    official(
+      "Impôt sur le revenu : versement de l'acompte trimestriel",
+      'https://entreprendre.service-public.fr/actualites/impot-revenu-acompte',
+    ),
+    targetMedia,
+    { now: NOW },
+  );
+  assert.equal(incomeTax.status, 'rejected');
+  assert.deepEqual(incomeTax.keywordMatches, []);
+  assert.ok(incomeTax.blockers.includes('hors-thématique'));
+});

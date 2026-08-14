@@ -159,6 +159,7 @@ export const MEDIA_NETWORK = Object.freeze([
     topicKeywords: [
       'entreprise', 'micro-entreprise', 'SASU', 'TVA', 'facturation',
       'Urssaf', 'BOFiP', 'Légifrance', 'comptabilité', 'fiscalité',
+      'crédit d’impôt', 'C3IV',
     ],
     xQueries: [
       'annonce officielle entreprise fiscalité Urssaf BOFiP Service Public France',
@@ -226,9 +227,11 @@ export const MEDIA_SOURCES = Object.freeze([
 
   // SEO et affiliation
   source({ id: 'google-search-doc-updates', name: 'Google Search Documentation Updates', type: 'rss', url: 'https://developers.google.com/search/updates/search_docs_updates.rss', tier: 0, official: true, media: ['affiliation'] }),
+  source({ id: 'google-search-status', name: 'Google Search Status Dashboard', type: 'rss', required: false, url: 'https://status.search.google.com/en/feed.atom?hl=fr', tier: 0, official: true, media: ['affiliation'] }),
   source({ id: 'abondance', name: 'Abondance', type: 'rss', url: 'https://www.abondance.com/feed', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'webrankinfo', name: 'WebRankInfo', type: 'rss', url: 'https://www.webrankinfo.com/dossiers/feed', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'search-engine-journal', name: 'Search Engine Journal', type: 'rss', url: 'https://www.searchenginejournal.com/feed/', tier: 2, official: false, media: ['affiliation'] }),
+  source({ id: 'search-engine-land', name: 'Search Engine Land', type: 'rss', required: false, url: 'https://searchengineland.com/feed', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'search-engine-watch', name: 'Search Engine Watch', type: 'rss', required: false, url: 'https://searchenginewatch.com/feed/', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'moz-blog', name: 'Moz Blog', type: 'rss', url: 'https://moz.com/posts/rss/blog', tier: 2, official: false, media: ['affiliation'] }),
 
@@ -250,7 +253,8 @@ export const MEDIA_SOURCES = Object.freeze([
 
   // Entreprise et réglementation
   source({ id: 'service-public-pro', name: 'Service Public Entreprendre', type: 'rss', url: 'https://www.service-public.fr/abonnements/rss/actu-actu-pro.rss', tier: 0, official: true, media: ['entreprise'] }),
-  source({ id: 'bofip-rss', name: 'BOFiP Flux RSS', type: 'page', pageMode: 'reference', url: 'https://bofip.impots.gouv.fr/flux-rss', tier: 1, official: true, media: ['entreprise'] }),
+  source({ id: 'economie-actualites', name: 'Ministère de l’Économie — Actualités', type: 'rss', required: false, url: 'https://www.economie.gouv.fr/rss/toutesactualites', tier: 0, official: true, media: ['entreprise'] }),
+  source({ id: 'bofip-rss', name: 'BOFiP Flux RSS', type: 'rss', required: false, url: 'https://bofip.impots.gouv.fr/bofip/ext/rss/last-rss.xml', tier: 1, official: true, media: ['entreprise'] }),
   source({ id: 'legifrance-api', name: 'Légifrance Open Data et API', type: 'page', pageMode: 'reference', required: false, url: 'https://www.legifrance.gouv.fr/contenu/pied-de-page/open-data-et-api', tier: 1, official: true, media: ['entreprise'] }),
   source({ id: 'urssaf-news', name: 'Urssaf Actualités', type: 'page', pageMode: 'links', required: false, url: 'https://www.urssaf.fr/accueil/actualites.html', tier: 1, official: true, media: ['entreprise'] }),
   source({ id: 'bfm-economie', name: 'BFM Économie', type: 'rss', url: 'https://www.bfmtv.com/rss/economie/', tier: 2, official: false, media: ['entreprise'] }),

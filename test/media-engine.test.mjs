@@ -1064,7 +1064,7 @@ test('publication VPS: le CLI conserve le résultat pour enregistrer le cycle', 
   const cli = readFileSync(new URL('../bin/media-engine.mjs', import.meta.url), 'utf8');
   assert.match(cli, /result = draftPath\s*\? await worker\.publishDraftPath/);
   assert.match(cli, /output\(result\);/);
-  assert.match(cli, /candidateRetries: newsRetries/);
+  assert.match(cli, /classifyRunOutcome\(command, result/);
 });
 
 test('publication: fraîcheur immédiate en journée et report au matin pendant la nuit', () => {
