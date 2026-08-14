@@ -1345,7 +1345,14 @@ export class MediaEngine {
       const selected = this.selectedMedia(mediaSlug);
       const candidatePool = buildQualifiedCandidatePool({
         currentCandidates: candidates,
-        queueEntries: this.store.listQueueEntries('qualified'),
+        // Les flux inchangés répondent souvent 304 et ne réémettent aucun
+        // item pendant le cycle. Relire aussi la file des candidats jadis
+        // rejetés permet de les requalifier après une correction de taxonomie
+        // ou de scoring, sans attendre une modification artificielle du flux.
+        queueEntries: [
+          ...this.store.listQueueEntries('qualified'),
+          ...this.store.listQueueEntries('candidates'),
+        ],
         media: selected,
         offers: this.offers,
       });

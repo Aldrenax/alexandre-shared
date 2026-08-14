@@ -106,6 +106,46 @@ test('file: les candidats frais persistés sont requalifiés, les anciens sont e
   assert.deepEqual(pool.map((candidate) => candidate.id), ['fresh']);
 });
 
+test('cycle: un candidat rejeté avant une correction de taxonomie est requalifié depuis sa file', async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'media-rejected-requalification-'));
+  const store = new MediaStateStore(runtimeDir);
+  store.initialize();
+  const candidate = {
+    ...officialCandidate(
+      'requalified-from-rejected',
+      'OpenAI annonce GPT pour les logiciels SaaS',
+      'https://openai.com/index/requalified-from-rejected',
+    ),
+    status: 'rejected',
+    blockers: ['hors-thématique'],
+    score: 68,
+  };
+  store.upsertObserved('candidates', 'logiciels-requalified-from-rejected', candidate);
+
+  const engine = new MediaEngine({
+    store,
+    env: { MEDIA_ENGINE_X_SEARCH_ENABLED: 'false' },
+    enrichCandidateEvidenceImpl: async (value) => ({
+      ...value,
+      sources: value.sources.map((source) => ({ ...source, evidenceStatus: 'available' })),
+      evidenceAvailableCount: 1,
+    }),
+  });
+  engine.collect = async () => [];
+  engine.researchX = async () => [];
+  engine.qualify = () => [];
+  engine.generateDraft = async (value) => ({
+    status: 'draft',
+    mediaSlug: value.mediaSlug,
+    candidateId: value.id,
+    qa: { passed: true, issues: [] },
+  });
+
+  const result = await engine.runCycle({ mediaSlug: 'logiciels' });
+  assert.equal(result.drafts.length, 1);
+  assert.equal(result.drafts[0].candidateId, 'requalified-from-rejected');
+});
+
 test('cycle: un premier candidat sans preuve ne bloque plus le suivant de la file', async () => {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'media-queue-drain-'));
   const store = new MediaStateStore(runtimeDir);
