@@ -430,17 +430,17 @@ export function normalizeEnrichedXEvidence(candidate, media, originalCandidate =
         evidenceError: undefined,
       };
     }
-    if (source.official) {
-      return {
-        ...source,
-        official: false,
-        tier: Math.max(3, Number(source.tier) || 3),
-        evidenceStatus: 'unavailable',
-        evidenceKind: 'unverified-x-html-rejected',
-        evidenceError: 'Post X officiel non vérifiable dans les données structurées',
-      };
-    }
-    return source;
+    // Le HTML public de X peut n'être qu'une coquille JavaScript ou une page
+    // de connexion. Aucune entrée X non vérifiée ne peut donc compter comme
+    // preuve secondaire accessible dans un cycle de publication automatique.
+    return {
+      ...source,
+      official: false,
+      tier: Math.max(3, Number(source.tier) || 3),
+      evidenceStatus: 'unavailable',
+      evidenceKind: 'unverified-x-html-rejected',
+      evidenceError: 'Post X non vérifiable dans les données structurées',
+    };
   });
   return {
     ...candidate,
@@ -1369,12 +1369,14 @@ export class MediaEngine {
           let generationAttempts = 0;
           for (const candidate of mediaCandidates) {
             if (inspected >= 20 || evidenceAttempts >= 3 || generationAttempts >= 2) break;
-            inspected += 1;
             const eventKey = `draft:${media.slug}:${candidate.id}:news`;
             if (!shouldGenerateDraftForEvent(this.store, eventKey)) {
               attempts.push({ mediaSlug: media.slug, candidateId: candidate.id, status: 'already-processed' });
               continue;
             }
+            // Le plafond borne les nouveaux candidats réellement examinés.
+            // Les entrées déjà traitées ne doivent pas affamer la file fraîche.
+            inspected += 1;
 
             const draftConflict = findDraftConflict(
               candidate,
@@ -1405,12 +1407,17 @@ export class MediaEngine {
 
             evidenceAttempts += 1;
             try {
-              const enrichedCandidate = normalizeEnrichedXEvidence(
+              const normalizedCandidate = normalizeEnrichedXEvidence(
                 await this.enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl }),
                 media,
                 candidate,
               );
-              const officialRequired = candidate.officialRequired ?? candidateRequiresOfficialEvidence(candidate, media);
+              // L'enrichissement peut révéler un rappel, un accident ou un
+              // défaut absent du titre initial. Le gate officiel est donc
+              // recalculé sur la preuve enrichie et ne peut jamais rester figé
+              // sur une valeur pré-enrichissement plus permissive.
+              const officialRequired = candidateRequiresOfficialEvidence(normalizedCandidate, media);
+              const enrichedCandidate = { ...normalizedCandidate, officialRequired };
               const availableSources = (enrichedCandidate.sources || [])
                 .filter((source) => source.evidenceStatus === 'available');
               const officialEvidenceAvailable = availableSources.some((source) => source.official && Number(source.tier) <= 1);

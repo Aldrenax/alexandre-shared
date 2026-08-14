@@ -72,18 +72,22 @@ test('X: seule une URL directe dont le handle est autorisé devient officielle',
     sources: [
       { sourceId: 'x-search', kind: 'x-search', url: direct.url, official: true, tier: 1, excerpt: 'Page HTML générique de connexion '.repeat(5), evidenceStatus: 'available' },
       { sourceId: 'x-search', kind: 'x-search', url: opaque.url, official: true, tier: 1, excerpt: 'Page HTML générique de connexion '.repeat(5), evidenceStatus: 'available' },
+      { sourceId: 'x-search', kind: 'x-search', url: 'https://x.com/randomvendor/status/123', official: false, tier: 3, excerpt: 'Page HTML générique de connexion '.repeat(5), evidenceStatus: 'available' },
     ],
   };
   const normalized = normalizeEnrichedXEvidence(enriched, media, {
     sources: [
       { sourceId: 'x-search', url: direct.url, excerpt: structuredSummary },
       { sourceId: 'x-search', url: opaque.url, excerpt: structuredSummary },
+      { sourceId: 'x-search', url: 'https://x.com/randomvendor/status/123', excerpt: structuredSummary },
     ],
   });
   assert.equal(normalized.sources[0].evidenceKind, 'verified-x-search-post');
   assert.equal(normalized.sources[0].excerpt, structuredSummary);
   assert.equal(normalized.sources[1].evidenceStatus, 'unavailable');
   assert.equal(normalized.sources[1].official, false);
+  assert.equal(normalized.sources[2].evidenceStatus, 'unavailable');
+  assert.equal(normalized.sources[2].official, false);
   assert.equal(normalized.evidenceAvailableCount, 1);
 });
 
@@ -139,6 +143,88 @@ test('cycle: un premier candidat sans preuve ne bloque plus le suivant de la fil
   assert.equal(store.getEvent('draft:logiciels:first:news').status, 'retryable-failure');
   assert.equal(store.getEvent('draft:logiciels:second:news').status, 'qa-passed');
   assert.equal(store.listQueueEntries('events').filter((entry) => entry.payload.type === 'editorial.engine.degraded').length, 1);
+});
+
+test('cycle: les candidats déjà traités ne consomment pas le plafond de lecture', async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'media-processed-drain-'));
+  const store = new MediaStateStore(runtimeDir);
+  store.initialize();
+  const processed = Array.from({ length: 25 }, (_, index) => officialCandidate(
+    `processed-${String(index).padStart(2, '0')}`,
+    `OpenAI annonce un logiciel SaaS déjà traité ${index}`,
+    `https://openai.com/index/processed-${index}`,
+  ));
+  const fresh = officialCandidate('fresh-after-processed', 'OpenAI annonce un nouveau logiciel SaaS', 'https://openai.com/index/fresh-after-processed');
+  for (const candidate of processed) {
+    store.markEvent(`draft:logiciels:${candidate.id}:news`, { status: 'qa-passed' });
+  }
+
+  const engine = new MediaEngine({
+    store,
+    env: { MEDIA_ENGINE_X_SEARCH_ENABLED: 'false' },
+    enrichCandidateEvidenceImpl: async (candidate) => ({
+      ...candidate,
+      sources: candidate.sources.map((source) => ({ ...source, evidenceStatus: 'available' })),
+      evidenceAvailableCount: 1,
+    }),
+  });
+  engine.collect = async () => [];
+  engine.researchX = async () => [];
+  engine.qualify = () => [...processed, fresh];
+  engine.generateDraft = async (candidate) => ({
+    status: 'draft',
+    mediaSlug: candidate.mediaSlug,
+    candidateId: candidate.id,
+    qa: { passed: true, issues: [] },
+  });
+
+  const result = await engine.runCycle({ mediaSlug: 'logiciels' });
+  assert.equal(result.drafts.length, 1);
+  assert.equal(result.drafts[0].candidateId, 'fresh-after-processed');
+});
+
+test('cycle: un risque Tesla révélé par enrichissement réactive la preuve officielle', async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'media-product-safety-enriched-'));
+  const store = new MediaStateStore(runtimeDir);
+  store.initialize();
+  const publishedAt = new Date().toISOString();
+  const candidate = {
+    id: 'tesla-risk-after-enrichment',
+    mediaSlug: 'tesla-tech',
+    title: 'Tesla présente une nouvelle offre Powerwall',
+    primaryUrl: 'https://source-a.test/tesla-powerwall',
+    publishedAt,
+    status: 'qualified',
+    officialRequired: false,
+    sources: [
+      { sourceId: 'a', tier: 2, official: false, title: 'Tesla Powerwall', url: 'https://source-a.test/tesla-powerwall', excerpt: 'Nouvelle offre résidentielle.', publishedAt },
+      { sourceId: 'b', tier: 2, official: false, title: 'Tesla Powerwall', url: 'https://source-b.test/tesla-powerwall', excerpt: 'Confirmation indépendante.', publishedAt },
+    ],
+  };
+  store.upsertObserved('qualified', 'tesla-risk-after-enrichment', candidate);
+  let generated = false;
+  const engine = new MediaEngine({
+    store,
+    env: { MEDIA_ENGINE_X_SEARCH_ENABLED: 'false' },
+    enrichCandidateEvidenceImpl: async (value) => ({
+      ...value,
+      sources: value.sources.map((source) => ({
+        ...source,
+        excerpt: `${source.excerpt} Une enquête mentionne un rappel pour défaut et risque d'incendie.`,
+        evidenceStatus: 'available',
+      })),
+      evidenceAvailableCount: 2,
+    }),
+  });
+  engine.collect = async () => [];
+  engine.researchX = async () => [];
+  engine.qualify = () => [];
+  engine.generateDraft = async () => { generated = true; return { qa: { passed: true } }; };
+
+  const result = await engine.runCycle({ mediaSlug: 'tesla-tech' });
+  assert.equal(generated, false);
+  assert.equal(result.drafts.length, 0);
+  assert.equal(store.getEvent('draft:tesla-tech:tesla-risk-after-enrichment:news').reason, 'source-officielle-inaccessible');
 });
 
 test('cycle: deux sources secondaires qualifiées doivent rester accessibles toutes les deux', async () => {
