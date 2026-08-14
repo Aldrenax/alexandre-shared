@@ -116,6 +116,15 @@ test('registre sources: Search Engine Land reste une source secondaire optionnel
   assert.deepEqual(source.media, ['affiliation']);
 });
 
+test('registre sources: toutes les sources secondaires restent non bloquantes', () => {
+  const secondarySources = MEDIA_SOURCES.filter((source) => !source.official);
+  const officialRequired = MEDIA_SOURCES.filter((source) => source.official && source.required !== false);
+
+  assert.ok(secondarySources.length > 0);
+  assert.ok(officialRequired.length > 0);
+  assert.equal(secondarySources.every((source) => source.required === false), true);
+});
+
 test('collecteur RSS BOFiP: infère la date depuis la description puis le suffixe URL', async () => {
   const source = MEDIA_SOURCES.find((entry) => entry.id === 'bofip-rss');
   const xml = `<?xml version="1.0" encoding="UTF-8"?>

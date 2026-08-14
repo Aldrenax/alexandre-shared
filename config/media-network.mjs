@@ -203,7 +203,14 @@ export const MEDIA_NETWORK = Object.freeze([
   },
 ]);
 
-const source = (value) => Object.freeze(value);
+// Une source secondaire enrichit et corrobore les sujets, mais son timeout ne
+// constitue pas une panne du moteur. Par défaut, seules les sources officielles
+// sont donc requises ; chaque complément officiel fragile peut encore être
+// explicitement rendu optionnel avec `required: false`.
+const source = (value) => Object.freeze({
+  required: value.required ?? Boolean(value.official),
+  ...value,
+});
 
 export const MEDIA_SOURCES = Object.freeze([
   // Réseau principal / technologie / entrepreneuriat
