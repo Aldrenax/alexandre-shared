@@ -51,7 +51,9 @@ Daily et AskOptimize restent dans le registre et dans Telegram, mais
 6. Rédaction JSON par ChatGPT via Hermes.
 7. Génération d'une seule bannière avec `image_gen`, selon la politique `youtube-thumbnail-imagegen:article-single-v1`, sans modifier la skill source.
 8. Conversion locale en WebP 1200x630.
-9. QA déterministe.
+9. QA déterministe, avec au plus une réparation textuelle bornée par défaut pour
+   les écarts sûrs (longueur, structure, mentions obligatoires). Une erreur de
+   preuve, de rumeur, de source ou de bannière reste bloquante.
 10. Écriture d'un brouillon dans `/var/lib/alexandre-media-engine/drafts`.
 11. Créneau de publication recommandé : délai court en journée, report à 07:00 Europe/Paris la nuit.
 

@@ -11,6 +11,15 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import { hostname } from 'node:os';
 
+const QUEUE_KINDS = new Set([
+  'candidates',
+  'qualified',
+  'drafts',
+  'events',
+  'caption-requests',
+  'newsletter-attribution',
+]);
+
 function ensureDir(path) {
   mkdirSync(path, { recursive: true, mode: 0o750 });
 }
@@ -29,6 +38,15 @@ export function writeJsonAtomic(path, value) {
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o640 });
   renameSync(temporary, path);
+}
+
+export function assertQueueKind(kind) {
+  if (!QUEUE_KINDS.has(kind)) throw new Error(`File inconnue: ${kind}`);
+  return kind;
+}
+
+function safeQueueId(id) {
+  return String(id).replace(/[^a-z0-9._-]/gi, '-').slice(0, 160);
 }
 
 export class MediaStateStore {
@@ -100,13 +118,55 @@ export class MediaStateStore {
     }), { version: 1, runs: {} });
   }
 
+  queuePath(kind, id) {
+    assertQueueKind(kind);
+    return join(this.queueDir, kind, `${safeQueueId(id)}.json`);
+  }
+
   enqueue(kind, id, payload) {
-    if (!['candidates', 'qualified', 'drafts', 'events', 'caption-requests', 'newsletter-attribution'].includes(kind)) throw new Error(`File inconnue: ${kind}`);
+    assertQueueKind(kind);
     const directory = join(this.queueDir, kind);
     ensureDir(directory);
-    const safeId = String(id).replace(/[^a-z0-9._-]/gi, '-').slice(0, 160);
-    const path = join(directory, `${safeId}.json`);
+    const path = this.queuePath(kind, id);
     writeJsonAtomic(path, payload);
+    return path;
+  }
+
+  listQueueEntries(kind) {
+    assertQueueKind(kind);
+    const directory = join(this.queueDir, kind);
+    if (!existsSync(directory)) return [];
+    const invalidJson = Symbol('invalid-json');
+    return readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map((entry) => {
+        const path = join(directory, entry.name);
+        const payload = readJson(path, invalidJson);
+        if (payload === invalidJson) return null;
+        return { path, payload, mtimeMs: statSync(path).mtimeMs };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  upsertObserved(kind, id, payload, { now = new Date() } = {}) {
+    assertQueueKind(kind);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Payload d\u2019observation invalide');
+    }
+    const observedAt = now instanceof Date ? now : new Date(now);
+    if (!Number.isFinite(observedAt.getTime())) throw new Error('Date d\u2019observation invalide');
+    const path = this.queuePath(kind, id);
+    const existing = readJson(path, null);
+    const firstSeenAt = existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? existing.firstSeenAt
+      : null;
+    ensureDir(dirname(path));
+    writeJsonAtomic(path, {
+      ...payload,
+      firstSeenAt: firstSeenAt || payload.firstSeenAt || observedAt.toISOString(),
+      lastSeenAt: observedAt.toISOString(),
+    });
     return path;
   }
 

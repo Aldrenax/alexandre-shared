@@ -106,7 +106,8 @@ export const MEDIA_NETWORK = Object.freeze([
     guideTopics: ['comparatif', 'tutoriel', 'automation', 'marketing', 'no-code'],
     topicKeywords: [
       'logiciel', 'SaaS', 'marketing', 'automatisation', 'no-code', 'IA',
-      'open source', 'CRM', 'email marketing', 'productivité',
+      'open source', 'CRM', 'email marketing', 'productivité', 'OpenAI',
+      'ChatGPT', 'GPT', 'GitHub', 'Copilot', 'Gemini', 'agent IA',
     ],
     xQueries: [
       'annonce officielle logiciel SaaS IA marketing automatisation changelog',
@@ -131,7 +132,7 @@ export const MEDIA_NETWORK = Object.freeze([
     guideTopics: ['debuter', 'bourse-etf', 'crypto', 'epargne-livrets', 'fiscalite', 'immobilier', 'retraite-pension', 'comparatif-plateformes'],
     topicKeywords: [
       'AMF', 'BCE', 'Banque de France', 'bourse', 'ETF', 'PEA', 'épargne',
-      'crypto-actif', 'Bitcoin', 'taux', 'inflation',
+      'crypto-actif', 'Bitcoin', 'taux', 'inflation', 'paiement', 'cash', 'euro',
     ],
     xQueries: [
       'AMF BCE Banque de France annonce officielle investissement épargne crypto',
@@ -205,7 +206,7 @@ const source = (value) => Object.freeze(value);
 export const MEDIA_SOURCES = Object.freeze([
   // Réseau principal / technologie / entrepreneuriat
   source({ id: 'openai-news', name: 'OpenAI News', type: 'rss', url: 'https://openai.com/news/rss.xml', tier: 0, official: true, media: ['chaimbault', 'logiciels'] }),
-  source({ id: 'google-search-blog', name: 'Google Search Central Blog', type: 'page', pageMode: 'links', url: 'https://developers.google.com/search/blog', tier: 1, official: true, media: ['chaimbault', 'affiliation'] }),
+  source({ id: 'google-search-blog', name: 'Google Search Central Blog', type: 'rss', url: 'https://developers.google.com/search/blog/feed.xml', tier: 1, official: true, media: ['chaimbault', 'affiliation'] }),
   source({ id: 'github-changelog', name: 'GitHub Changelog', type: 'rss', url: 'https://github.blog/changelog/feed/', tier: 0, official: true, media: ['chaimbault', 'logiciels'] }),
   source({ id: 'cloudflare-blog', name: 'Cloudflare Blog', type: 'rss', url: 'https://blog.cloudflare.com/rss/', tier: 0, official: true, media: ['chaimbault', 'logiciels'] }),
   source({ id: 'frenchweb', name: 'Frenchweb', type: 'rss', url: 'https://www.frenchweb.fr/feed', tier: 2, official: false, media: ['chaimbault', 'logiciels', 'entreprise'] }),

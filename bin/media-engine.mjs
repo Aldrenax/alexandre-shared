@@ -115,7 +115,17 @@ try {
     const scheduledRetries = command === 'video' && Array.isArray(result)
       ? result.filter((entry) => entry?.retryScheduled)
       : [];
-    const status = failedEntries.length ? 'degraded' : scheduledRetries.length ? 'warning' : 'success';
+    const newsRetries = command === 'run' && Array.isArray(result?.attempts)
+      ? result.attempts.filter((entry) => entry?.status === 'retryable-failure')
+      : [];
+    const newsQaFailures = command === 'run' && Array.isArray(result?.attempts)
+      ? result.attempts.filter((entry) => entry?.status === 'qa-failed')
+      : [];
+    const status = failedEntries.length || newsQaFailures.length
+      ? 'degraded'
+      : scheduledRetries.length || newsRetries.length
+        ? 'warning'
+        : 'success';
     engine.store.recordRun(command, {
       status,
       mediaSlug: mediaSlug || null,
@@ -124,6 +134,12 @@ try {
       } : {}),
       ...(scheduledRetries.length ? {
         scheduledRetries: scheduledRetries.map((entry) => ({ mediaSlug: entry.mediaSlug, videoId: entry.videoId, reason: entry.error || entry.reason })),
+      } : {}),
+      ...(newsRetries.length ? {
+        candidateRetries: newsRetries.map((entry) => ({ mediaSlug: entry.mediaSlug, candidateId: entry.candidateId, reason: entry.reason })),
+      } : {}),
+      ...(newsQaFailures.length ? {
+        qaFailures: newsQaFailures.map((entry) => ({ mediaSlug: entry.mediaSlug, candidateId: entry.candidateId, reason: entry.reason })),
       } : {}),
     });
     if (failedEntries.length) process.exitCode = 1;

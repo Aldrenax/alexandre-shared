@@ -24,6 +24,13 @@ function withoutBoilerplate(html = '') {
     .replace(/<(script|style|svg|noscript|nav|header|footer|form)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
 }
 
+function pageIdentity(value, base) {
+  const url = new URL(value, base);
+  const hostname = url.hostname.replace(/^www\./, '').toLowerCase();
+  const pathname = url.pathname.replace(/\/+$/, '') || '/';
+  return `${hostname}${pathname}`;
+}
+
 export function extractReadableText(html = '', maximumLength = 20_000) {
   return decodeHtml(withoutBoilerplate(html))
     .slice(0, maximumLength);
@@ -51,16 +58,18 @@ export function extractBalancedEvidence(html = '', maximumLength = 12_000) {
 function pageLinks(html, source) {
   const items = [];
   const seen = new Set();
+  const sourceUrl = new URL(source.url);
+  const sourcePage = pageIdentity(sourceUrl);
   for (const match of withoutBoilerplate(html).matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
     const title = decodeHtml(match[2]);
     if (title.length < 25 || title.length > 240) continue;
     let url;
-    try { url = new URL(match[1], source.url); } catch { continue; }
+    try { url = new URL(match[1], sourceUrl); } catch { continue; }
     if (!/^https?:$/.test(url.protocol)) continue;
-    if (url.hostname.replace(/^www\./, '') !== new URL(source.url).hostname.replace(/^www\./, '')) continue;
+    if (url.hostname.replace(/^www\./, '') !== sourceUrl.hostname.replace(/^www\./, '')) continue;
     url.hash = '';
     const key = url.toString();
-    if (seen.has(key) || key === source.url) continue;
+    if (seen.has(key) || pageIdentity(url) === sourcePage) continue;
     seen.add(key);
     items.push({
       id: `${source.id}:${digest(key).slice(0, 16)}`,

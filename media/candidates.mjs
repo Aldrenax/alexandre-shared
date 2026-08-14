@@ -6,6 +6,20 @@ const STOP_WORDS = new Set([
   'and', 'for', 'from', 'this', 'that', 'what', 'when', 'why',
 ]);
 
+export const DEFAULT_MAX_CANDIDATE_AGE_HOURS = 72;
+
+const PRODUCT_SAFETY_KEYWORDS = Object.freeze([
+  'sécurité', 'safety',
+  'rappel', 'rappels', 'recall', 'recalls',
+  'accident', 'accidents',
+  'crash', 'crashes', 'collision', 'collisions',
+  'incendie', 'incendies', 'fire', 'fires',
+  'décès', 'death', 'fatal', 'fatality', 'blessure', 'blessures', 'injury', 'injuries',
+  'défaut', 'défauts', 'défaillance', 'défaillances', 'defect', 'defects', 'failure', 'failures',
+  'frein', 'freins', 'brake', 'brakes', 'airbag', 'airbags',
+  'enquête', 'investigation', 'probe', 'NHTSA',
+]);
+
 function normalizeText(value = '') {
   return String(value)
     .normalize('NFD')
@@ -18,6 +32,18 @@ function normalizeText(value = '') {
 
 function tokens(value) {
   return new Set(normalizeText(value).split(' ').filter((word) => word.length >= 3 && !STOP_WORDS.has(word)));
+}
+
+/**
+ * Recherche un mot-clé ou une phrase complète dans un texte normalisé. Les
+ * espaces ajoutés imposent des bornes de tokens : `IA` ne correspond donc ni
+ * à `India` ni à `reliability`, et `PEA` ne correspond pas à `European`.
+ */
+export function textMatchesKeyword(value, keyword) {
+  const haystack = normalizeText(value);
+  const needle = normalizeText(keyword);
+  if (!haystack || !needle) return false;
+  return ` ${haystack} `.includes(` ${needle} `);
 }
 
 export function similarity(left, right) {
@@ -151,12 +177,23 @@ function ageHours(value, now) {
   return Math.max(0, (now.getTime() - Date.parse(value)) / 3_600_000);
 }
 
-function keywordMatches(candidate, media) {
-  const haystack = normalizeText([
+function candidateText(candidate = {}) {
+  return [
     candidate.title,
-    ...candidate.sources.map((source) => `${source.title} ${source.excerpt}`),
-  ].join(' '));
-  return (media.topicKeywords || []).filter((keyword) => haystack.includes(normalizeText(keyword)));
+    ...(candidate.sources || []).map((source) => `${source?.title || ''} ${source?.excerpt || ''}`),
+  ].join(' ');
+}
+
+function keywordMatches(candidate, media) {
+  const haystack = candidateText(candidate);
+  return (media.topicKeywords || []).filter((keyword) => textMatchesKeyword(haystack, keyword));
+}
+
+export function candidateRequiresOfficialEvidence(candidate, media) {
+  if (['regulated-finance', 'legal-tax'].includes(media?.risk)) return true;
+  if (media?.risk !== 'product-safety') return false;
+  const subject = candidateText(candidate);
+  return PRODUCT_SAFETY_KEYWORDS.some((keyword) => textMatchesKeyword(subject, keyword));
 }
 
 export function eligibleOffers(offers = [], mediaSlug) {
@@ -170,14 +207,11 @@ export function eligibleOffers(offers = [], mediaSlug) {
 }
 
 export function matchOffer(candidate, offers = [], mediaSlug) {
-  const haystack = normalizeText([
-    candidate.title,
-    ...candidate.sources.map((source) => `${source.title} ${source.excerpt}`),
-  ].join(' '));
+  const haystack = candidateText(candidate);
   return eligibleOffers(offers, mediaSlug)
     .map((offer) => {
       const keywords = Array.isArray(offer.keywords) ? offer.keywords : [];
-      const matches = keywords.filter((keyword) => haystack.includes(normalizeText(keyword)));
+      const matches = keywords.filter((keyword) => textMatchesKeyword(haystack, keyword));
       return { offer, score: matches.length };
     })
     .filter((entry) => entry.score > 0)
@@ -188,6 +222,7 @@ export function qualifyCandidate(candidate, media, {
   offers = [],
   now = new Date(),
   minimumScore = 70,
+  maxAgeHours = DEFAULT_MAX_CANDIDATE_AGE_HOURS,
 } = {}) {
   const sources = candidate.sources || [];
   const official = sources.filter((source) => source.official && source.tier <= 1);
@@ -196,22 +231,25 @@ export function qualifyCandidate(candidate, media, {
   }));
   const matches = keywordMatches(candidate, media);
   const age = ageHours(candidate.publishedAt, now);
-  const sensitive = ['regulated-finance', 'legal-tax', 'product-safety'].includes(media.risk);
+  const maximumAge = Number.isFinite(Number(maxAgeHours)) && Number(maxAgeHours) >= 0
+    ? Number(maxAgeHours)
+    : DEFAULT_MAX_CANDIDATE_AGE_HOURS;
+  const officialRequired = candidateRequiresOfficialEvidence(candidate, media);
   const rumor = sources.every((source) => source.tier >= 3 || /rumeur|rumor|leak|fuite/i.test(source.title));
   const hasEvidence = official.length > 0 || independentDomains.size >= 2;
-  const corroborated = sensitive ? official.length > 0 : hasEvidence;
+  const corroborated = officialRequired ? official.length > 0 : hasEvidence;
   const offer = matchOffer(candidate, offers, media.slug);
 
   let score = 0;
   // Une annonce officielle et réellement thématique constitue déjà une preuve
   // exploitable. Les sources secondaires restent soumises à corroboration.
   score += official.length ? 36 : sources.some((source) => source.tier === 2) ? 18 : 8;
-  score += independentDomains.size >= 2 ? 18 : official.length ? 14 : 8;
+  score += independentDomains.size >= 2 ? 24 : official.length ? 14 : 8;
   score += matches.length ? Math.min(20, 10 + ((matches.length - 1) * 5)) : 0;
-  score += age == null ? 10 : age <= 24 ? 18 : age <= 72 ? 10 : 2;
+  score += age == null ? 10 : age <= 24 ? 18 : age <= maximumAge ? 10 : 2;
   score += offer ? 10 : 0;
   if (rumor) score -= 30;
-  if (sensitive && !official.length) score -= 25;
+  if (officialRequired && !official.length) score -= 25;
   score = Math.max(0, Math.min(100, score));
 
   const blockers = [];
@@ -219,6 +257,7 @@ export function qualifyCandidate(candidate, media, {
   if (!hasEvidence) blockers.push('preuve-insuffisante');
   if (!corroborated) blockers.push('source-officielle-requise');
   if (rumor) blockers.push('rumeur-non-corroborée');
+  if (age != null && age > maximumAge) blockers.push('candidat-trop-ancien');
   if (score < minimumScore) blockers.push(`score-inférieur-à-${minimumScore}`);
 
   return {
@@ -226,9 +265,12 @@ export function qualifyCandidate(candidate, media, {
     mediaSlug: media.slug,
     score,
     risk: media.risk,
+    ageHours: age,
+    maxAgeHours: maximumAge,
     keywordMatches: matches,
     officialSourceCount: official.length,
     independentSourceCount: independentDomains.size,
+    officialRequired,
     corroborated,
     rumor,
     offer: offer ? {

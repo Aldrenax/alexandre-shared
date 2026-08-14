@@ -2,9 +2,17 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { getChannelFeed, getVideoInfo, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
-import { activeMedia, assertValidRegistry, mediaBySlug, sourcesForMedia } from './registry.mjs';
+import {
+  activeMedia,
+  assertValidRegistry,
+  MEDIA_ENGINE_DEFAULTS,
+  mediaBySlug,
+  sourcesForMedia,
+} from './registry.mjs';
 import { collectSources, enrichCandidateEvidence } from './source-collector.mjs';
 import {
+  candidateRequiresOfficialEvidence,
+  canonicalUrl,
   clusterCandidates,
   findDraftConflict,
   findInternalLinkConflict,
@@ -14,6 +22,7 @@ import {
   ARTICLE_THUMBNAIL_POLICY,
   buildBannerPrompt,
   buildEditorialPrompt,
+  buildEditorialRepairPrompt,
   EDITORIAL_REVISION,
   normalizeDraft,
 } from './editorial.mjs';
@@ -22,7 +31,62 @@ import { guideCandidate, selectGuideOpportunity } from './guide-planner.mjs';
 import { HermesClient } from './hermes-client.mjs';
 import { MediaStateStore, readJson } from './state-store.mjs';
 
-function xItems(result, media) {
+const X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657n;
+
+function normalizedXHandle(value = '') {
+  return String(value).trim().replace(/^@/, '').toLowerCase();
+}
+
+export function xPostIdentity(rawUrl = '') {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (!['x.com', 'twitter.com'].includes(host)) return { handle: null, statusId: null };
+    const parts = url.pathname.split('/').filter(Boolean);
+    const statusIndex = parts.findIndex((part) => part.toLowerCase() === 'status');
+    if (statusIndex < 1 || !/^\d{10,}$/.test(parts[statusIndex + 1] || '')) {
+      return { handle: null, statusId: null };
+    }
+    const handle = normalizedXHandle(parts[statusIndex - 1]);
+    return {
+      handle: handle === 'i' ? null : handle,
+      statusId: parts[statusIndex + 1],
+    };
+  } catch {
+    return { handle: null, statusId: null };
+  }
+}
+
+export function xSnowflakePublishedAt(statusId, now = new Date()) {
+  try {
+    const milliseconds = (BigInt(statusId) >> 22n) + X_SNOWFLAKE_EPOCH_MS;
+    const value = Number(milliseconds);
+    const minimum = Date.parse('2006-03-21T00:00:00.000Z');
+    if (!Number.isFinite(value) || value < minimum || value > now.getTime() + 86_400_000) return null;
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function allowedXHandles(media) {
+  return new Set((media.officialXQueries || [])
+    .flatMap((search) => search.allowedHandles || [])
+    .map(normalizedXHandle)
+    .filter(Boolean));
+}
+
+export function verifiedOfficialXPost(post, media, explicitHandles = []) {
+  const identity = xPostIdentity(post?.url);
+  if (!identity.handle) return false;
+  const allowed = new Set([
+    ...allowedXHandles(media),
+    ...explicitHandles.map(normalizedXHandle),
+  ]);
+  return allowed.has(identity.handle);
+}
+
+export function xItems(result, media) {
   if (result.degraded) return [];
   const posts = Array.isArray(result.posts) ? result.posts : [];
   const citations = Array.isArray(result.citations) ? result.citations : [];
@@ -33,24 +97,59 @@ function xItems(result, media) {
     publishedAt: null,
     official: false,
   }));
-  return values.filter((post) => /^https?:\/\//.test(post.url || '')).map((post, index) => ({
-    id: `x:${media.slug}:${index}:${post.url}`,
-    sourceId: 'x-search',
-    sourceTier: post.official || result.officialSearch ? 1 : 3,
-    sourceOfficial: Boolean(post.official || result.officialSearch),
-    title: post.summary || result.answer || result.query,
-    url: post.url,
-    excerpt: post.summary || result.answer || '',
-    publishedAt: post.publishedAt || null,
-    author: post.author || '',
-    media: [media.slug],
-    kind: 'x-search',
-  }));
+  return values.filter((post) => /^https?:\/\//.test(post.url || '')).map((post, index) => {
+    const identity = xPostIdentity(post.url);
+    const official = verifiedOfficialXPost(post, media, result.allowedHandles || []);
+    return {
+      id: `x:${media.slug}:${index}:${post.url}`,
+      sourceId: 'x-search',
+      sourceTier: official ? 1 : 3,
+      sourceOfficial: official,
+      title: post.summary || result.answer || result.query,
+      url: post.url,
+      excerpt: post.summary || result.answer || '',
+      publishedAt: post.publishedAt || xSnowflakePublishedAt(identity.statusId) || null,
+      author: post.author || '',
+      media: [media.slug],
+      kind: 'x-search',
+    };
+  });
 }
 
 function positiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const REPAIRABLE_QA_ISSUES = new Set([
+  'word-count-low',
+  'description-invalid',
+  'h1-forbidden',
+  'typography-dash',
+  'section-invalid',
+  'category-invalid',
+  'guide-topic-invalid',
+  'source-link-missing',
+  'claims-missing',
+  'claim-empty',
+  'claim-unsourced',
+  'claim-source-unknown',
+  'finance-disclaimer-missing',
+  'capital-risk-missing',
+  'legal-tax-disclaimer-missing',
+  'affiliate-disclosure-missing',
+  'affiliate-link-missing',
+]);
+
+export function qaCanBeRepaired(qa) {
+  const errors = (qa?.issues || []).filter((entry) => entry.severity === 'error');
+  return errors.length > 0 && errors.every((entry) => REPAIRABLE_QA_ISSUES.has(entry.code));
+}
+
+function qaRepairLimit(env = process.env) {
+  const parsed = Number.parseInt(env.MEDIA_ENGINE_QA_REPAIR_ATTEMPTS ?? '1', 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(2, Math.max(0, parsed));
 }
 
 function plausibleVideoDate(value, now = Date.now()) {
@@ -265,6 +364,185 @@ function retryAt(hours) {
   return new Date(Date.now() + hours * 3_600_000).toISOString();
 }
 
+function validTimestamp(value) {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+export function candidateObservedAt(candidate) {
+  const xIdentity = (candidate.sources || [])
+    .map((source) => xPostIdentity(source?.url))
+    .find((identity) => identity.statusId);
+  const values = [
+    candidate.publishedAt,
+    ...(candidate.sources || []).map((source) => source?.publishedAt),
+    xSnowflakePublishedAt(xIdentity?.statusId),
+  ];
+  const timestamps = values.map(validTimestamp).filter((value) => value != null);
+  if (timestamps.length) return Math.max(...timestamps);
+  // Une première observation, un mtime ou un lastSeenAt ne prouvent pas la
+  // date de publication d'une actualité. Les contenus non datés restent des
+  // sources de guides, mais ne passent jamais dans la cadence quotidienne.
+  return null;
+}
+
+export function candidateIsFresh(candidate, {
+  now = new Date(),
+  maximumAgeHours = MEDIA_ENGINE_DEFAULTS.candidateMaxAgeHours || 72,
+} = {}) {
+  const observedAt = candidateObservedAt(candidate);
+  if (observedAt == null) return false;
+  return observedAt <= now.getTime() + 86_400_000
+    && observedAt >= now.getTime() - maximumAgeHours * 3_600_000;
+}
+
+function sanitizePersistedXEvidence(candidate, media) {
+  return {
+    ...candidate,
+    sources: (candidate.sources || []).map((source) => {
+      if (source?.sourceId !== 'x-search' && source?.kind !== 'x-search') return source;
+      const official = verifiedOfficialXPost(source, media);
+      const identity = xPostIdentity(source.url);
+      return {
+        ...source,
+        official,
+        tier: official ? 1 : Math.max(3, Number(source.tier) || 3),
+        publishedAt: source.publishedAt || xSnowflakePublishedAt(identity.statusId) || null,
+      };
+    }),
+  };
+}
+
+export function normalizeEnrichedXEvidence(candidate, media, originalCandidate = candidate) {
+  const sources = (candidate.sources || []).map((source) => {
+    if (source?.sourceId !== 'x-search' && source?.kind !== 'x-search') return source;
+    const verifiedOfficial = Boolean(source.official) && verifiedOfficialXPost(source, media);
+    const originalSource = (originalCandidate.sources || []).find((value) => value?.sourceId === source.sourceId
+      && canonicalUrl(value?.url) === canonicalUrl(source.url));
+    const structuredExcerpt = String(originalSource?.excerpt || '').trim();
+    if (verifiedOfficial && structuredExcerpt.length >= 80) {
+      return {
+        ...source,
+        excerpt: structuredExcerpt,
+        evidenceStatus: 'available',
+        evidenceKind: 'verified-x-search-post',
+        evidenceRetrievedAt: candidate.evidenceEnrichedAt || new Date().toISOString(),
+        evidenceError: undefined,
+      };
+    }
+    if (source.official) {
+      return {
+        ...source,
+        official: false,
+        tier: Math.max(3, Number(source.tier) || 3),
+        evidenceStatus: 'unavailable',
+        evidenceKind: 'unverified-x-html-rejected',
+        evidenceError: 'Post X officiel non vérifiable dans les données structurées',
+      };
+    }
+    return source;
+  });
+  return {
+    ...candidate,
+    sources,
+    evidenceAvailableCount: sources.filter((source) => source.evidenceStatus === 'available').length,
+  };
+}
+
+function candidatePoolKey(candidate) {
+  return `${candidate.mediaSlug}:${canonicalUrl(candidate.primaryUrl || '') || candidate.id}`;
+}
+
+function candidateSort(left, right) {
+  const score = Number(right.score || 0) - Number(left.score || 0);
+  if (score) return score;
+  const topics = Number(right.keywordMatches?.length || 0) - Number(left.keywordMatches?.length || 0);
+  if (topics) return topics;
+  return candidateObservedAt(right) - candidateObservedAt(left);
+}
+
+export function buildQualifiedCandidatePool({
+  currentCandidates = [],
+  queueEntries = [],
+  media = [],
+  offers = [],
+  now = new Date(),
+  minimumScore = MEDIA_ENGINE_DEFAULTS.minimumCandidateScore || 70,
+  maximumAgeHours = MEDIA_ENGINE_DEFAULTS.candidateMaxAgeHours || 72,
+} = {}) {
+  const mediaMap = new Map(media.map((item) => [item.slug, item]));
+  const values = [];
+  for (const entry of queueEntries) {
+    const payload = entry?.payload;
+    const target = mediaMap.get(payload?.mediaSlug);
+    if (!target || !candidateIsFresh(payload, { now, maximumAgeHours })) continue;
+    const sanitized = sanitizePersistedXEvidence(payload, target);
+    const requalified = qualifyCandidate(sanitized, target, {
+      offers,
+      now,
+      minimumScore,
+      maxAgeHours: maximumAgeHours,
+    });
+    if (requalified.status === 'qualified') {
+      values.push({ ...requalified, firstSeenAt: payload.firstSeenAt, lastSeenAt: payload.lastSeenAt });
+    }
+  }
+  for (const candidate of currentCandidates) {
+    if (candidate.status !== 'qualified' || !mediaMap.has(candidate.mediaSlug)) continue;
+    if (!candidateIsFresh(candidate, { now, maximumAgeHours })) continue;
+    values.push(candidate);
+  }
+  const deduped = new Map();
+  for (const candidate of values.sort(candidateSort)) {
+    const key = candidatePoolKey(candidate);
+    if (!deduped.has(key)) deduped.set(key, candidate);
+  }
+  // Le dédoublonnage reste strictement intra-média. Une annonce réellement
+  // pertinente pour deux verticales peut recevoir deux angles distincts ; les
+  // faux routages inter-sites sont déjà éliminés par le matching borné.
+  return [...deduped.values()].sort(candidateSort);
+}
+
+export function pendingEligibleNewsDraft(store, mediaSlug, {
+  now = new Date(),
+  maximumAgeHours = MEDIA_ENGINE_DEFAULTS.candidateMaxAgeHours || 72,
+} = {}) {
+  return store.listDrafts(mediaSlug).find(({ draft }) => draft?.contentType === 'news'
+    && draft?.qa?.passed
+    && draft?.publicationEligibility?.status === 'eligible'
+    && validTimestamp(draft.generatedAt) != null
+    && validTimestamp(draft.generatedAt) >= now.getTime() - maximumAgeHours * 3_600_000
+    && !store.hasEvent(`published:${mediaSlug}:news:${draft.slug}`)) || null;
+}
+
+export function newsDraftReceipt(draft, candidateId) {
+  return videoDraftReceipt(draft, candidateId);
+}
+
+function markNewsRetry(store, eventKey, media, candidate, receipt) {
+  store.markEvent(eventKey, receipt);
+  const day = new Date().toISOString().slice(0, 10);
+  const fingerprint = createHash('sha256')
+    .update(`${media.slug}\n${candidate.id}\n${receipt.reason}`)
+    .digest('hex')
+    .slice(0, 10);
+  const eventId = `candidate-deferred-${media.slug}-${day}-${fingerprint}`;
+  if (!store.hasEvent(eventId)) {
+    store.enqueue('events', eventId, {
+      version: 1,
+      eventId,
+      type: 'editorial.engine.degraded',
+      createdAt: new Date().toISOString(),
+      mediaSlug: media.slug,
+      candidateId: candidate.id,
+      title: candidate.title,
+      error: `Candidat différé: ${String(receipt.reason || 'preuve indisponible').slice(0, 500)}`,
+      retryAt: receipt.nextRetryAt || null,
+    });
+    store.markEvent(eventId, { status: 'notified', reason: receipt.reason });
+  }
+}
+
 export class MediaEngine {
   constructor({
     store = new MediaStateStore(),
@@ -274,6 +552,7 @@ export class MediaEngine {
     internalLinks = {},
     getChannelFeedImpl = getChannelFeed,
     getVideoInfoImpl = getVideoInfo,
+    enrichCandidateEvidenceImpl = enrichCandidateEvidence,
     env = process.env,
   } = {}) {
     this.store = store;
@@ -283,6 +562,7 @@ export class MediaEngine {
     this.internalLinks = internalLinks;
     this.getChannelFeed = getChannelFeedImpl;
     this.getVideoInfo = getVideoInfoImpl;
+    this.enrichCandidateEvidence = enrichCandidateEvidenceImpl;
     this.env = env;
   }
 
@@ -314,7 +594,7 @@ export class MediaEngine {
         sources: Object.fromEntries(results.map((result) => [result.sourceId, result])),
       });
       for (const result of results) {
-        for (const item of result.items) this.store.enqueue('candidates', `${result.sourceId}-${item.id}`, item);
+        for (const item of result.items) this.store.upsertObserved('candidates', `${result.sourceId}-${item.id}`, item);
       }
     }
     return results;
@@ -427,9 +707,14 @@ export class MediaEngine {
           sourceId: 'x-search',
         };
       }
-      const enriched = { ...result, mediaSlug: search.media.slug, officialSearch: search.officialSearch };
+      const enriched = {
+        ...result,
+        mediaSlug: search.media.slug,
+        officialSearch: search.officialSearch,
+        allowedHandles: search.allowedHandles,
+      };
       results.push(enriched);
-      for (const item of xItems(enriched, search.media)) this.store.enqueue('candidates', item.id, item);
+      for (const item of xItems(enriched, search.media)) this.store.upsertObserved('candidates', item.id, item);
       if (quotaExceeded(enriched.degradedReason) || quotaExceeded(enriched.answer)) {
         const cooldown = new Date(now.getTime() + policy.quotaCooldownHours * 3_600_000).toISOString();
         this.store.write('x-search-budget', {
@@ -458,10 +743,14 @@ export class MediaEngine {
     for (const media of selected) {
       const clusters = clusterCandidates(items.filter((item) => item.media?.includes(media.slug)));
       for (const cluster of clusters) {
-        const candidate = qualifyCandidate(cluster, media, { offers: this.offers });
+        const candidate = qualifyCandidate(cluster, media, {
+          offers: this.offers,
+          minimumScore: MEDIA_ENGINE_DEFAULTS.minimumCandidateScore,
+          maxAgeHours: MEDIA_ENGINE_DEFAULTS.candidateMaxAgeHours,
+        });
         qualified.push(candidate);
         if (persist) {
-          this.store.enqueue(candidate.status === 'qualified' ? 'qualified' : 'candidates', `${media.slug}-${candidate.id}`, candidate);
+          this.store.upsertObserved(candidate.status === 'qualified' ? 'qualified' : 'candidates', `${media.slug}-${candidate.id}`, candidate);
         }
       }
     }
@@ -512,6 +801,44 @@ export class MediaEngine {
     let draft = normalizeDraft(payload, { contentType, candidate, media });
     if (draft.status === 'blocked') return draft;
     if (contentType === 'video') draft.video = video;
+
+    const initialQa = qaDraft(draft, media, { candidate, requireBanner: false });
+    let textQa = initialQa;
+    let repairAttempts = 0;
+    let repairError = null;
+    const repairLimit = qaRepairLimit(this.env);
+    while (!textQa.passed && repairAttempts < repairLimit && qaCanBeRepaired(textQa)) {
+      repairAttempts += 1;
+      try {
+        const repairPayload = await this.hermes.generateEditorialJson(buildEditorialRepairPrompt({
+          media,
+          candidate,
+          contentType,
+          draft,
+          qa: textQa,
+        }), { contentType });
+        const repairedDraft = normalizeDraft(repairPayload, { contentType, candidate, media });
+        if (repairedDraft.status === 'blocked') {
+          repairError = repairedDraft.reason || 'repair-blocked';
+          break;
+        }
+        draft = repairedDraft;
+        if (contentType === 'video') draft.video = video;
+        textQa = qaDraft(draft, media, { candidate, requireBanner: false });
+      } catch (error) {
+        repairError = String(error?.message || error);
+        break;
+      }
+    }
+    draft.qaRepair = {
+      attempted: repairAttempts > 0,
+      attempts: repairAttempts,
+      limit: repairLimit,
+      resolved: textQa.passed,
+      initialIssueCodes: initialQa.issues.filter((entry) => entry.severity === 'error').map((entry) => entry.code),
+      remainingIssueCodes: textQa.issues.filter((entry) => entry.severity === 'error').map((entry) => entry.code),
+      error: repairError,
+    };
 
     if (generateBanner && contentType !== 'video') {
       const bannerResult = await this.hermes.generateBannerJson(buildBannerPrompt({ media, draft }));
@@ -860,7 +1187,7 @@ export class MediaEngine {
         results.push({ mediaSlug: media.slug, skipped: true, reason: 'already-drafted', opportunityId: opportunity.id });
         continue;
       }
-      const enrichedCandidate = await enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl });
+      const enrichedCandidate = await this.enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl });
       const draft = await this.generateDraft(enrichedCandidate, { contentType: 'guide' });
       this.store.markEvent(eventKey, {
         status: draft.qa?.passed ? 'qa-passed' : 'qa-failed',
@@ -911,6 +1238,8 @@ export class MediaEngine {
     if (requiredResults.length && sourcesHealthy / requiredResults.length < 0.8) blockers.push('source-coverage-below-80-percent');
     if (sourceAgeHours != null && sourceAgeHours > 3) blockers.push('source-health-stale');
     if (networkRun?.status === 'failed') blockers.push('last-network-run-failed');
+    if (networkRun?.status === 'degraded') blockers.push('last-network-run-degraded');
+    if (networkRun?.status === 'warning') warnings.push('last-network-run-warning');
     if (networkAgeHours != null && networkAgeHours > 3) blockers.push('network-run-stale');
     if (videoRun?.status === 'failed') blockers.push('last-video-run-failed');
     if (videoRun?.status === 'degraded') blockers.push('last-video-run-degraded');
@@ -1013,16 +1342,127 @@ export class MediaEngine {
         }),
       ];
       const candidates = this.qualify(items, { mediaSlug });
+      const selected = this.selectedMedia(mediaSlug);
+      const candidatePool = buildQualifiedCandidatePool({
+        currentCandidates: candidates,
+        queueEntries: this.store.listQueueEntries('qualified'),
+        media: selected,
+        offers: this.offers,
+      });
       const drafts = [];
+      const attempts = [];
       if (generateDrafts) {
-        for (const media of this.selectedMedia(mediaSlug)) {
-          const candidate = candidates.find((entry) => entry.mediaSlug === media.slug && entry.status === 'qualified');
-          if (!candidate) continue;
-          const eventKey = `draft:${media.slug}:${candidate.id}:news`;
-          if (!shouldGenerateDraftForEvent(this.store, eventKey)) continue;
-          const enrichedCandidate = await enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl });
-          if (!enrichedCandidate.evidenceAvailableCount) continue;
-          drafts.push(await this.generateDraft(enrichedCandidate, { contentType: 'news' }));
+        for (const media of selected) {
+          const pendingDraft = pendingEligibleNewsDraft(this.store, media.slug);
+          if (pendingDraft) {
+            attempts.push({
+              mediaSlug: media.slug,
+              status: 'waiting-publication',
+              candidateId: pendingDraft.draft.candidateId,
+              draftPath: pendingDraft.path,
+            });
+            continue;
+          }
+          const mediaCandidates = candidatePool.filter((candidate) => candidate.mediaSlug === media.slug);
+          let inspected = 0;
+          let evidenceAttempts = 0;
+          let generationAttempts = 0;
+          for (const candidate of mediaCandidates) {
+            if (inspected >= 20 || evidenceAttempts >= 3 || generationAttempts >= 2) break;
+            inspected += 1;
+            const eventKey = `draft:${media.slug}:${candidate.id}:news`;
+            if (!shouldGenerateDraftForEvent(this.store, eventKey)) {
+              attempts.push({ mediaSlug: media.slug, candidateId: candidate.id, status: 'already-processed' });
+              continue;
+            }
+
+            const draftConflict = findDraftConflict(
+              candidate,
+              this.store.listDrafts(media.slug).map((entry) => ({ ...entry.draft, draftPath: entry.path })),
+              { mediaSlug: media.slug, contentType: 'news' },
+            );
+            if (draftConflict) {
+              const receipt = newsDraftReceipt({
+                status: 'blocked',
+                reason: `duplicate-draft:${draftConflict.reason}`,
+                duplicateDraftPath: draftConflict.draft.draftPath || null,
+              }, candidate.id);
+              this.store.markEvent(eventKey, receipt);
+              attempts.push({ mediaSlug: media.slug, candidateId: candidate.id, ...receipt });
+              continue;
+            }
+            const publishedConflict = findInternalLinkConflict(candidate, this.internalLinks[media.slug] || []);
+            if (publishedConflict) {
+              const receipt = newsDraftReceipt({
+                status: 'blocked',
+                reason: 'already-published-or-similar',
+                publishedPath: publishedConflict.path,
+              }, candidate.id);
+              this.store.markEvent(eventKey, receipt);
+              attempts.push({ mediaSlug: media.slug, candidateId: candidate.id, ...receipt });
+              continue;
+            }
+
+            evidenceAttempts += 1;
+            try {
+              const enrichedCandidate = normalizeEnrichedXEvidence(
+                await this.enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl }),
+                media,
+                candidate,
+              );
+              const officialRequired = candidate.officialRequired ?? candidateRequiresOfficialEvidence(candidate, media);
+              const availableSources = (enrichedCandidate.sources || [])
+                .filter((source) => source.evidenceStatus === 'available');
+              const officialEvidenceAvailable = availableSources.some((source) => source.official && Number(source.tier) <= 1);
+              const accessibleDomains = new Set(availableSources.map((source) => {
+                try { return new URL(source.url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return source.sourceId; }
+              }).filter(Boolean));
+              const evidenceCorroborated = officialEvidenceAvailable || accessibleDomains.size >= 2;
+              if (!enrichedCandidate.evidenceAvailableCount
+                || (officialRequired && !officialEvidenceAvailable)
+                || (!officialRequired && !evidenceCorroborated)) {
+                const reason = officialRequired && !officialEvidenceAvailable
+                  ? 'source-officielle-inaccessible'
+                  : !evidenceCorroborated
+                    ? 'corroboration-accessible-insuffisante'
+                    : 'preuve-source-inaccessible';
+                const receipt = {
+                  status: 'retryable-failure',
+                  reason,
+                  nextRetryAt: retryAt(2),
+                  editorialRevision: EDITORIAL_REVISION,
+                  candidateId: candidate.id,
+                };
+                markNewsRetry(this.store, eventKey, media, candidate, receipt);
+                attempts.push({ mediaSlug: media.slug, candidateId: candidate.id, ...receipt });
+                continue;
+              }
+
+              generationAttempts += 1;
+              const draft = await this.generateDraft(enrichedCandidate, { contentType: 'news' });
+              const receipt = newsDraftReceipt(draft, candidate.id);
+              const { at: _previousAt, ...previousReceipt } = this.store.getEvent(eventKey) || {};
+              this.store.markEvent(eventKey, { ...previousReceipt, ...receipt });
+              attempts.push({ mediaSlug: media.slug, candidateId: candidate.id, ...receipt });
+              if (draft?.qa?.passed) {
+                drafts.push(draft);
+                break;
+              }
+            } catch (error) {
+              const message = String(error?.message || error);
+              const receipt = {
+                status: 'retryable-failure',
+                reason: message,
+                nextRetryAt: retryAt(2),
+                editorialRevision: EDITORIAL_REVISION,
+                candidateId: candidate.id,
+              };
+              markNewsRetry(this.store, eventKey, media, candidate, receipt);
+              attempts.push({ mediaSlug: media.slug, candidateId: candidate.id, ...receipt });
+              continue;
+            }
+          }
+          if (!mediaCandidates.length) attempts.push({ mediaSlug: media.slug, status: 'no-fresh-qualified-candidate' });
         }
       }
       return {
@@ -1030,6 +1470,8 @@ export class MediaEngine {
         collection,
         xSearch,
         candidates,
+        candidatePool,
+        attempts,
         drafts,
         health: this.healthReport({ collectionResults: collection, xResults: xSearch }),
       };

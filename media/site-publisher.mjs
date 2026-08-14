@@ -69,6 +69,7 @@ export function auditDraftOutboundLinks(content, draft, media) {
     new URL(media.siteUrl).origin,
     'https://alexandrechaimbault.com',
     'https://formations.alexandrechaimbault.com',
+    'https://askoptimize.com',
   ]);
   const allowedVideoHosts = new Set(['youtube.com', 'youtu.be', 'youtube-nocookie.com']);
   const unexpected = [];

@@ -13,7 +13,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 11;
+export const EDITORIAL_REVISION = 12;
 export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-single-v1';
 
 const ARTICLE_THUMBNAIL_PROFILES = Object.freeze({
@@ -124,15 +124,13 @@ function commonInstructions({ media, candidate, type, internalLinks, offer }) {
   const requirement = CONTENT_REQUIREMENTS[type];
   // Leave a deliberate margin for model-side word-count drift. The QA floor
   // remains the publication gate; this target simply prevents near-miss drafts.
-  const wordTarget = type === 'guide' ? requirement.minimumWords + 400 : requirement.minimumWords;
+  const wordTarget = requirement.minimumWords + ({ news: 150, video: 250, guide: 400 }[type] || 0);
   const sources = sourcePacket(candidate, type === 'guide' ? 12_000 : 3_000);
   return [
     `Tu rédiges pour ${media.name} (${media.siteUrl}).`,
     `Rubrique obligatoire: ${requirement.section}.`,
     `Longueur attendue: ${requirement.minimumWords} à ${requirement.maximumWords} mots utiles.`,
-    type === 'guide'
-      ? `Objectif de sécurité: vise au moins ${wordTarget} mots utiles afin de ne jamais descendre sous le seuil QA de ${requirement.minimumWords} mots après normalisation.`
-      : null,
+    `Objectif de sécurité: vise au moins ${wordTarget} mots utiles afin de ne jamais descendre sous le seuil QA de ${requirement.minimumWords} mots après normalisation.`,
     `Risque éditorial: ${media.risk}.`,
     '',
     'RÈGLES DE PREUVE:',
@@ -208,6 +206,47 @@ export function buildEditorialPrompt({
     '',
     ...typeInstructions(contentType, { video }),
   ].join('\n');
+}
+
+export function buildEditorialRepairPrompt({ media, candidate, contentType, draft, qa }) {
+  const requirement = CONTENT_REQUIREMENTS[contentType];
+  if (!requirement) throw new Error(`contentType inconnu: ${contentType}`);
+  const repairTarget = requirement.minimumWords + ({ news: 150, video: 250, guide: 400 }[contentType] || 0);
+  const editableDraft = {
+    contentType,
+    section: draft.section,
+    title: draft.title,
+    slug: draft.slug,
+    description: draft.description,
+    body: draft.body,
+    wordCount: draft.wordCount,
+    category: draft.category,
+    topic: draft.topic,
+    tags: draft.tags,
+    keyPoints: draft.keyPoints,
+    faq: draft.faq,
+    sourceUrls: draft.sourceUrls,
+    claims: draft.claims,
+    internalLinkSuggestions: draft.internalLinkSuggestions,
+    offer: draft.offer,
+    bannerBrief: draft.bannerBrief,
+  };
+  return [
+    `RÉPARATION QA BORNÉE pour ${media.name}.`,
+    `Corrige uniquement les erreurs QA listées ci-dessous et retourne le brouillon complet au format JSON.`,
+    `Seuil de longueur: ${requirement.minimumWords} à ${requirement.maximumWords} mots; vise au moins ${repairTarget} mots utiles si le brouillon est trop court.`,
+    contentType === 'video' ? `Le titre doit rester exactement: ${candidate.title}` : null,
+    '',
+    'GARDE-FOUS:',
+    '- Conserve les faits, la position éditoriale, les URL sources, les claims et les références valides.',
+    '- N’ajoute aucun fait, chiffre, citation, test, résultat, offre ou URL qui ne figure pas déjà dans le brouillon.',
+    '- Pour allonger, développe uniquement les explications, transitions, limites et conséquences déjà présentes.',
+    '- Pour raccourcir, retire les répétitions sans supprimer les preuves ni les avertissements.',
+    '- N’utilise aucun H1 et aucun tiret cadratin ou demi-cadratin.',
+    `ERREURS QA JSON: ${JSON.stringify(qa?.issues || [])}`,
+    `BROUILLON À RÉPARER JSON: ${JSON.stringify(editableDraft)}`,
+    `SCHÉMA JSON ATTENDU: ${JSON.stringify(outputSchema(contentType))}`,
+  ].filter(Boolean).join('\n');
 }
 
 export function buildBannerPrompt({ media, draft }) {
