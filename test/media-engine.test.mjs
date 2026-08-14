@@ -417,6 +417,31 @@ test('file éditoriale: même source ou titre voisin est bloqué sur un même m�
   assert.equal(findInternalLinkConflict(candidate, [{ anchor: 'Google actualise son SEO Starter Guide avec un cap débutant', path: '/actualites/google-seo-starter-guide/' }]).path, '/actualites/google-seo-starter-guide/');
 });
 
+test('file éditoriale API: un endpoint partagé ne confond pas deux campagnes officielles', () => {
+  const endpoint = 'https://api.nhtsa.gov/recalls/recallsByVehicle?make=Tesla';
+  const candidate = (itemId) => ({
+    id: `candidate-${itemId}`,
+    title: 'BACK OVER PREVENTION: SENSING SYSTEM: CAMERA',
+    primaryUrl: endpoint,
+    sources: [{
+      sourceId: 'nhtsa-recalls',
+      kind: 'official-api',
+      itemId,
+      url: endpoint,
+    }],
+  });
+  const drafts = [{
+    mediaSlug: 'tesla-tech',
+    contentType: 'news',
+    title: 'BACK OVER PREVENTION: SENSING SYSTEM: CAMERA',
+    sourceUrls: [endpoint],
+    sourceItemIds: ['nhtsa-recalls:24V935000'],
+  }];
+
+  assert.equal(findDraftConflict(candidate('24V935000'), drafts, { mediaSlug: 'tesla-tech', contentType: 'news' }).reason, 'same-source-item');
+  assert.equal(findDraftConflict(candidate('26V315000'), drafts, { mediaSlug: 'tesla-tech', contentType: 'news' }), null);
+});
+
 test('curation: les brouillons historiques restent récupérables mais les doublons sont quarantainés', () => {
   const report = curateDraftQueue([
     { path: '/drafts/old.json', draft: { mediaSlug: 'logiciels', contentType: 'news', title: 'Cloudflare annonce un modèle pour les agents IA', sourceUrls: ['https://blog.cloudflare.com/agent-access'], qa: { passed: true }, generatedAt: '2026-08-05T10:00:00Z' } },

@@ -123,6 +123,15 @@ function urlsFor(value = {}) {
   ].filter((url) => /^https?:\/\//.test(String(url || ''))).map(canonicalUrl));
 }
 
+function apiItemIdentitiesFor(value = {}) {
+  return new Set([
+    ...(value.sourceItemIds || []),
+    ...(value.sources || [])
+      .filter((source) => source?.kind === 'official-api' && source?.sourceId && source?.itemId != null)
+      .map((source) => `${source.sourceId}:${source.itemId}`),
+  ].filter(Boolean).map(String));
+}
+
 /**
  * Détecte un conflit éditorial à l'intérieur d'un même média. La même annonce
  * peut être traitée par deux sites si l'angle est différent ; elle ne doit pas
@@ -134,12 +143,19 @@ export function findDraftConflict(candidate, drafts = [], {
   threshold = 0.58,
 } = {}) {
   const candidateUrls = urlsFor(candidate);
+  const candidateApiItems = apiItemIdentitiesFor(candidate);
   for (const draft of drafts) {
     if (draft?.mediaSlug !== mediaSlug || draft?.contentType !== contentType) continue;
     // A failed QA draft is an audit artifact, not editorial inventory. Keeping
     // it on disk must not prevent the next revised editorial revision.
     if (draft?.qa && !draft.qa.passed) continue;
     if (draft?.publicationEligibility?.status === 'quarantined') continue;
+    const draftApiItems = apiItemIdentitiesFor(draft);
+    const sharedApiItem = [...candidateApiItems].find((identity) => draftApiItems.has(identity));
+    if (sharedApiItem) return { reason: 'same-source-item', sharedUrl: null, sharedApiItem, draft };
+    // Deux enregistrements d'une API officielle sont deux événements distincts
+    // même s'ils partagent le même endpoint et un libellé générique identique.
+    if (candidateApiItems.size && draftApiItems.size) continue;
     const draftUrls = urlsFor(draft);
     const sharedUrl = [...candidateUrls].find((url) => draftUrls.has(url));
     if (sharedUrl) return { reason: 'same-source-url', sharedUrl, draft };

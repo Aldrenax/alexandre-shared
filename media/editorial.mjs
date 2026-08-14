@@ -287,6 +287,9 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
     ...(payload?.sourceUrls || []).filter((url) => /^https?:\/\//.test(url)),
     ...candidateSourceUrls,
   ])];
+  const sourceItemIds = [...new Set((candidate.sources || [])
+    .filter((source) => source?.kind === 'official-api' && source?.sourceId && source?.itemId != null)
+    .map((source) => `${source.sourceId}:${source.itemId}`))];
   let body = String(payload?.body || '').trim();
   if (contentType === 'video' && candidate.primaryUrl && !body.includes(`](${candidate.primaryUrl})`)) {
     body = `> [Voir la vidéo originale](${candidate.primaryUrl})\n\n${body}`;
@@ -313,6 +316,7 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
     body,
     wordCount,
     sourceUrls,
+    sourceItemIds,
     offer: candidate.offer || null,
     claims: Array.isArray(payload?.claims) ? payload.claims : [],
     generatedAt: generatedAt.toISOString(),
