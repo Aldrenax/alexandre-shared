@@ -1,7 +1,8 @@
 # Hermes Media Engine
 
-Statut au 6 août 2026 : moteur déployé en shadow sur `chaimbault`, publication
-automatique et push désactivés.
+Statut au 14 août 2026 : moteur déployé sur `chaimbault` après sept jours de
+shadow, publication automatique approuvée et push Git actif. Les limites de
+cadence et les contrôles qualité décrits ci-dessous restent obligatoires.
 
 ## Périmètre
 
@@ -175,6 +176,56 @@ Anthropic invalide. Il ne sera désactivé qu'au cutover, après la période sha
 
 Voir `deploy/media-engine.env.example`. Les fichiers d'offres, opportunités et
 liens internes sont des agrégats sans secrets produits par le Studio.
+
+### Cadence de publication
+
+Les limites ci-dessous sont des plafonds de publication réelle. Elles ne
+forcent jamais un contenu à passer si les sources, la bannière, la QA ou un
+autre garde-fou ne sont pas valides :
+
+| Portée | Limite |
+|---|---:|
+| Réseau, tous contenus | 10 par jour |
+| Réseau, Actualités | 8 par jour |
+| Réseau, Actualités supplémentaires après la première de chaque média | 2 par jour |
+| Réseau, Vidéos + Guides | 2 par jour |
+| Un média, tous contenus | 2 par jour |
+| Un média, Actualités | 2 par jour |
+| Un média, Vidéos + Guides | 1 par jour |
+| Un média, Vidéos | 1 par jour |
+| Un média, Guides | 1 par fenêtre glissante de 7 jours |
+| Réseau, intervalle minimal | 60 minutes |
+| Un média, intervalle minimal | 4 heures |
+
+L'ordre de sélection est dynamique : première Actualité du jour de chaque
+média, puis Vidéo, puis seconde Actualité, puis Guide. À priorité égale, le
+brouillon planifié ou généré le plus ancien passe en premier. Cette priorité
+organise la file ; elle ne contourne ni les plafonds réseau/média ni les gates
+de qualité. Daily et AskOptimize restent exclus de la production éditoriale.
+
+Le publisher charge les fichiers dans cet ordre :
+`/etc/alexandre-media-engine/media-engine.env`, puis `shadow.env`, puis
+`publication.env`. Le dernier fichier surcharge donc les deux premiers pour les
+gates et la cadence de publication. Une mise à jour du seul fichier exemple
+Git ne modifie pas un VPS déjà installé.
+
+Le code est installé par `deploy/install-media-engine.sh --apply` dans une
+release immuable sous `/opt/alexandre-media-engine/releases/<id>`, puis le lien
+`/opt/alexandre-media-engine/current` est basculé atomiquement vers celle-ci.
+Il ne faut jamais modifier directement le contenu pointé par `current`.
+
+`deploy/activate-publication.sh` migre `publication.env` sans recopier ni
+afficher de secret : il conserve la date de cutover existante, crée un fichier
+temporaire en mode `0640` et écrit uniquement les gates et paramètres non
+secrets. La curation doit réussir avant que ce fichier soit rendu effectif.
+L'ancien override est ensuite sauvegardé et le remplacement est atomique. Si la
+désactivation des anciens timers ou l'activation du publisher échoue, le script
+restaure l'ancien `publication.env` et remet exactement les états `enabled` et
+`active` initialement observés pour le publisher et les cinq anciens timers. Le
+succès exige ensuite une postcondition explicite : publisher actif et activé au
+démarrage, anciens timers inactifs et désactivés. Les services lisent ce fichier
+à chaque exécution ; aucune copie de `media-engine.env` ou d'un credential ne
+doit entrer dans Git.
 
 ## Commandes de validation
 

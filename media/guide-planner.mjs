@@ -13,8 +13,8 @@ function demandIsProven(evidence) {
   return Array.isArray(evidence.urls) && evidence.urls.some((url) => /^https?:\/\//.test(url));
 }
 
-export function selectGuideOpportunity(opportunities = [], mediaSlug, offers = []) {
-  const evaluated = opportunities
+export function rankGuideOpportunities(opportunities = [], mediaSlug, offers = []) {
+  return opportunities
     .filter((item) => item.mediaSlug === mediaSlug && item.status !== 'rejected')
     .map((item) => {
       const offer = activeOffer(offers, item.offerId, mediaSlug);
@@ -36,6 +36,10 @@ export function selectGuideOpportunity(opportunities = [], mediaSlug, offers = [
       };
     })
     .sort((a, b) => b.decisionScore - a.decisionScore);
+}
+
+export function selectGuideOpportunity(opportunities = [], mediaSlug, offers = []) {
+  const evaluated = rankGuideOpportunities(opportunities, mediaSlug, offers);
   return evaluated.find((item) => item.eligible) || {
     mediaSlug,
     eligible: false,
@@ -84,4 +88,3 @@ export function guideCandidate(opportunity, media) {
     })),
   };
 }
-

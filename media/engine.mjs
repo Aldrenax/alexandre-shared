@@ -28,7 +28,7 @@ import {
   normalizeDraft,
 } from './editorial.mjs';
 import { qaDraft } from './qa.mjs';
-import { guideCandidate, selectGuideOpportunity } from './guide-planner.mjs';
+import { guideCandidate, rankGuideOpportunities } from './guide-planner.mjs';
 import { HermesClient } from './hermes-client.mjs';
 import { MediaStateStore, readJson } from './state-store.mjs';
 
@@ -1272,37 +1272,68 @@ export class MediaEngine {
   }
 
   async runGuideCycle({ mediaSlug = null, opportunities = [], dryRun = false } = {}) {
-    const results = [];
-    for (const media of this.selectedMedia(mediaSlug)) {
-      const opportunity = selectGuideOpportunity(opportunities, media.slug, this.offers);
-      if (!opportunity.eligible) {
-        results.push({ mediaSlug: media.slug, skipped: true, blockers: opportunity.blockers });
-        continue;
-      }
-      const candidate = guideCandidate(opportunity, media);
-      if (candidate.status !== 'qualified') {
-        results.push({ mediaSlug: media.slug, skipped: true, blockers: candidate.blockers });
-        continue;
-      }
-      if (dryRun) {
-        results.push({ mediaSlug: media.slug, planned: true, opportunity, candidate });
-        continue;
-      }
-      const eventKey = `guide-draft:${media.slug}:${opportunity.id}`;
-      if (!shouldGenerateDraftForEvent(this.store, eventKey)) {
-        results.push({ mediaSlug: media.slug, skipped: true, reason: 'already-drafted', opportunityId: opportunity.id });
-        continue;
-      }
-      const enrichedCandidate = await this.enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl });
-      const draft = await this.generateDraft(enrichedCandidate, { contentType: 'guide' });
-      this.store.markEvent(eventKey, {
-        status: draft.qa?.passed ? 'qa-passed' : 'qa-failed',
-        editorialRevision: EDITORIAL_REVISION,
-        candidateId: candidate.id,
-      });
-      results.push({ mediaSlug: media.slug, opportunityId: opportunity.id, draft });
+    const selectedMedia = this.selectedMedia(mediaSlug);
+    const lease = dryRun ? null : this.store.acquireLease('guide-cycle', { ttlMs: 4 * 60 * 60_000 });
+    if (!dryRun && !lease) {
+      return [{ mediaSlug: mediaSlug || null, skipped: true, reason: 'guide-lease-active' }];
     }
-    return results;
+    const results = [];
+    try {
+      for (const media of selectedMedia) {
+        const ranked = rankGuideOpportunities(opportunities, media.slug, this.offers);
+        const eligible = ranked.filter((opportunity) => opportunity.eligible);
+        if (!eligible.length) {
+          results.push({
+            mediaSlug: media.slug,
+            skipped: true,
+            blockers: ranked[0]?.blockers || ['aucune-opportunité-configurée'],
+          });
+          continue;
+        }
+
+        const processedOpportunityIds = [];
+        const rejected = [];
+        let selected = false;
+        for (const opportunity of eligible) {
+          const candidate = guideCandidate(opportunity, media);
+          if (candidate.status !== 'qualified') {
+            rejected.push({ opportunityId: opportunity.id, blockers: candidate.blockers });
+            continue;
+          }
+          const eventKey = `guide-draft:${media.slug}:${opportunity.id}`;
+          if (!shouldGenerateDraftForEvent(this.store, eventKey)) {
+            processedOpportunityIds.push(opportunity.id);
+            continue;
+          }
+          if (dryRun) {
+            results.push({ mediaSlug: media.slug, planned: true, opportunity, candidate, processedOpportunityIds });
+            selected = true;
+            break;
+          }
+          const enrichedCandidate = await this.enrichCandidateEvidence(candidate, { fetchImpl: this.fetchImpl });
+          const draft = await this.generateDraft(enrichedCandidate, { contentType: 'guide' });
+          const receipt = videoDraftReceipt(draft, candidate.id);
+          this.store.markEvent(eventKey, receipt);
+          if (['duplicate-draft', 'already-published'].includes(receipt.status)) {
+            processedOpportunityIds.push(opportunity.id);
+            continue;
+          }
+          results.push({ mediaSlug: media.slug, opportunityId: opportunity.id, draft, processedOpportunityIds });
+          selected = true;
+          break;
+        }
+        if (!selected) results.push({
+          mediaSlug: media.slug,
+          skipped: true,
+          reason: processedOpportunityIds.length ? 'all-eligible-opportunities-already-processed' : 'no-qualified-opportunity',
+          processedOpportunityIds,
+          blockers: rejected[0]?.blockers || [],
+        });
+      }
+      return results;
+    } finally {
+      if (lease) this.store.releaseLease(lease);
+    }
   }
 
   healthReport({ collectionResults = null, xResults = null } = {}) {

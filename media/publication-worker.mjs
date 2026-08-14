@@ -19,6 +19,9 @@ const ROUTES = Object.freeze({
   guide: 'guides',
 });
 
+const GUIDE_WINDOW_DAYS = 7;
+const NON_NEWS_CONTENT_TYPES = new Set(['video', 'guide']);
+
 function execute(command, args, { cwd, timeoutMs = 900_000 } = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -57,6 +60,19 @@ function dayKey(value, timeZone = 'Europe/Paris') {
   }).formatToParts(value instanceof Date ? value : new Date(value));
   const field = (type) => parts.find((part) => part.type === type)?.value;
   return `${field('year')}-${field('month')}-${field('day')}`;
+}
+
+function publicationPriority(draft, receipts, now) {
+  if (draft.contentType === 'news') {
+    const today = dayKey(now);
+    const firstNewsPending = !receipts.some((receipt) => receipt.mediaSlug === draft.mediaSlug
+      && receipt.contentType === 'news'
+      && dayKey(receipt.publishedAt) === today);
+    return firstNewsPending ? 0 : 2;
+  }
+  if (draft.contentType === 'video') return 1;
+  if (draft.contentType === 'guide') return 3;
+  return Number.MAX_SAFE_INTEGER;
 }
 
 function shadowDays(startedAt, now = new Date()) {
@@ -197,17 +213,80 @@ export class PublicationWorker {
     const now = this.now();
     const today = dayKey(now);
     const todayReceipts = receipts.filter((receipt) => dayKey(receipt.publishedAt) === today);
-    const dailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT, 6);
-    const perMediaLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT, 1);
-    const minIntervalMinutes = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES, 90);
+    const dailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT, 10);
+    const newsNetworkDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_NEWS_DAILY_LIMIT, 8);
+    const extraNewsNetworkDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_EXTRA_NEWS_DAILY_LIMIT, 2);
+    const nonNewsNetworkDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_NON_NEWS_DAILY_LIMIT, 2);
+    const perMediaLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT, 2);
+    const newsDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_NEWS_PER_MEDIA_DAILY_LIMIT, 2);
+    const nonNewsPerMediaDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_NON_NEWS_PER_MEDIA_DAILY_LIMIT, 1);
+    const videoDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_VIDEO_PER_MEDIA_DAILY_LIMIT, 1);
+    const guideWeeklyLimit = positiveInteger(this.env.MEDIA_ENGINE_GUIDE_PER_MEDIA_WEEKLY_LIMIT, 1);
+    const minIntervalMinutes = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES, 60);
+    const perMediaMinIntervalMinutes = positiveInteger(
+      this.env.MEDIA_ENGINE_PUBLICATION_PER_MEDIA_MIN_INTERVAL_MINUTES,
+      240,
+    );
+    const sameMediaToday = todayReceipts.filter((receipt) => receipt.mediaSlug === draft.mediaSlug);
+    const newsToday = todayReceipts.filter((receipt) => receipt.contentType === 'news');
+    const nonNewsToday = todayReceipts.filter((receipt) => NON_NEWS_CONTENT_TYPES.has(receipt.contentType));
+    const newsCountsByMedia = new Map();
+    for (const receipt of newsToday) {
+      newsCountsByMedia.set(receipt.mediaSlug, (newsCountsByMedia.get(receipt.mediaSlug) || 0) + 1);
+    }
+    const mediaNewsToday = newsCountsByMedia.get(draft.mediaSlug) || 0;
+    const extraNewsToday = [...newsCountsByMedia.values()]
+      .reduce((total, count) => total + Math.max(0, count - 1), 0);
+    const isExtraNewsDraft = draft.contentType === 'news' && mediaNewsToday >= 1;
+    const isNonNewsDraft = NON_NEWS_CONTENT_TYPES.has(draft.contentType);
     if (todayReceipts.length >= dailyLimit) blockers.push(`network-daily-limit-${dailyLimit}`);
-    if (todayReceipts.filter((receipt) => receipt.mediaSlug === draft.mediaSlug).length >= perMediaLimit) {
-      blockers.push(`media-daily-limit-${draft.mediaSlug}-${perMediaLimit}`);
+    if (draft.contentType === 'news' && newsToday.length >= newsNetworkDailyLimit) {
+      blockers.push(`network-news-daily-limit-${newsNetworkDailyLimit}`);
+    }
+    if (isExtraNewsDraft && extraNewsToday >= extraNewsNetworkDailyLimit) {
+      blockers.push(`network-extra-news-daily-limit-${extraNewsNetworkDailyLimit}`);
+    }
+    if (isNonNewsDraft && nonNewsToday.length >= nonNewsNetworkDailyLimit) {
+      blockers.push(`network-non-news-daily-limit-${nonNewsNetworkDailyLimit}`);
+    }
+    if (sameMediaToday.length >= perMediaLimit) blockers.push(`media-daily-limit-${draft.mediaSlug}-${perMediaLimit}`);
+
+    if (draft.contentType === 'news') {
+      if (mediaNewsToday >= newsDailyLimit) blockers.push(`media-news-daily-limit-${draft.mediaSlug}-${newsDailyLimit}`);
+    } else if (draft.contentType === 'video') {
+      const videosToday = sameMediaToday.filter((receipt) => receipt.contentType === 'video').length;
+      if (videosToday >= videoDailyLimit) blockers.push(`media-video-daily-limit-${draft.mediaSlug}-${videoDailyLimit}`);
+    } else if (draft.contentType === 'guide') {
+      const guideWindowStart = now.getTime() - GUIDE_WINDOW_DAYS * 86_400_000;
+      const recentGuides = receipts.filter((receipt) => {
+        const publishedAt = Date.parse(receipt.publishedAt);
+        return receipt.mediaSlug === draft.mediaSlug
+          && receipt.contentType === 'guide'
+          && publishedAt > guideWindowStart
+          && publishedAt <= now.getTime();
+      }).length;
+      if (recentGuides >= guideWeeklyLimit) {
+        blockers.push(`media-guide-rolling-${GUIDE_WINDOW_DAYS}-day-limit-${draft.mediaSlug}-${guideWeeklyLimit}`);
+      }
+    }
+    if (isNonNewsDraft) {
+      const mediaNonNewsToday = sameMediaToday
+        .filter((receipt) => NON_NEWS_CONTENT_TYPES.has(receipt.contentType)).length;
+      if (mediaNonNewsToday >= nonNewsPerMediaDailyLimit) {
+        blockers.push(`media-non-news-daily-limit-${draft.mediaSlug}-${nonNewsPerMediaDailyLimit}`);
+      }
     }
     const lastPublishedAt = receipts.reduce((latest, receipt) => Math.max(latest, Date.parse(receipt.publishedAt) || 0), 0);
     const nextAllowedAt = lastPublishedAt + minIntervalMinutes * 60_000;
     if (lastPublishedAt && nextAllowedAt > now.getTime()) {
       blockers.push(`network-cooldown-until-${new Date(nextAllowedAt).toISOString()}`);
+    }
+    const lastMediaPublishedAt = receipts
+      .filter((receipt) => receipt.mediaSlug === draft.mediaSlug)
+      .reduce((latest, receipt) => Math.max(latest, Date.parse(receipt.publishedAt) || 0), 0);
+    const nextMediaAllowedAt = lastMediaPublishedAt + perMediaMinIntervalMinutes * 60_000;
+    if (lastMediaPublishedAt && nextMediaAllowedAt > now.getTime()) {
+      blockers.push(`media-cooldown-${draft.mediaSlug}-until-${new Date(nextMediaAllowedAt).toISOString()}`);
     }
     return blockers;
   }
@@ -338,13 +417,16 @@ export class PublicationWorker {
     const receipts = this.publicationReceipts();
     const queue = paths
       .map((path) => ({ path, draft: readJson(path, null) }))
-      .filter((entry) => entry.draft)
-      .sort((left, right) => {
+      .filter((entry) => entry.draft);
+    while (queue.length && results.length < limit) {
+      queue.sort((left, right) => {
+        const leftPriority = publicationPriority(left.draft, receipts, this.now());
+        const rightPriority = publicationPriority(right.draft, receipts, this.now());
         const leftAt = Date.parse(left.draft.scheduledPublishAt || left.draft.generatedAt || 0) || 0;
         const rightAt = Date.parse(right.draft.scheduledPublishAt || right.draft.generatedAt || 0) || 0;
-        return leftAt - rightAt || left.path.localeCompare(right.path);
+        return leftPriority - rightPriority || leftAt - rightAt || left.path.localeCompare(right.path);
       });
-    for (const { path, draft } of queue) {
+      const { path, draft } = queue.shift();
       if (results.length >= limit) break;
       if (!draft?.qa?.passed) continue;
       if (draft?.publicationEligibility?.status !== 'eligible') continue;

@@ -1241,6 +1241,319 @@ test('publication automatique: la bascule ignore l’historique et impose un ryt
   assert.ok(throttled.held.some((entry) => entry.blockers.some((blocker) => blocker.startsWith('network-cooldown-until-'))));
 });
 
+test('publication automatique: les quotas protègent une news par site puis bornent les suppléments', () => {
+  const now = new Date('2026-08-12T16:00:00.000Z');
+  const worker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-type-quotas-'))),
+    now: () => now,
+  });
+  const newsDraft = { mediaSlug: 'chaimbault', contentType: 'news' };
+  const videoDraft = { mediaSlug: 'chaimbault', contentType: 'video' };
+  const guideDraft = { mediaSlug: 'chaimbault', contentType: 'guide' };
+  const firstNews = {
+    mediaSlug: 'chaimbault',
+    contentType: 'news',
+    publishedAt: '2026-08-12T09:00:00.000Z',
+  };
+
+  assert.deepEqual(worker.queueBlockersFor(videoDraft, [firstNews]), []);
+  assert.deepEqual(worker.queueBlockersFor(newsDraft, [firstNews]), []);
+
+  const secondNews = { ...firstNews, publishedAt: '2026-08-12T10:00:00.000Z' };
+  const thirdNewsBlockers = worker.queueBlockersFor(newsDraft, [firstNews, secondNews]);
+  assert.ok(thirdNewsBlockers.includes('media-daily-limit-chaimbault-2'));
+  assert.ok(thirdNewsBlockers.includes('media-news-daily-limit-chaimbault-2'));
+
+  const firstVideo = {
+    mediaSlug: 'chaimbault',
+    contentType: 'video',
+    publishedAt: '2026-08-12T10:00:00.000Z',
+  };
+  const secondVideoBlockers = worker.queueBlockersFor(videoDraft, [firstNews, firstVideo]);
+  assert.ok(secondVideoBlockers.includes('media-daily-limit-chaimbault-2'));
+  assert.ok(secondVideoBlockers.includes('media-video-daily-limit-chaimbault-1'));
+
+  const recentGuide = {
+    mediaSlug: 'chaimbault',
+    contentType: 'guide',
+    publishedAt: new Date(now.getTime() - 6 * 86_400_000).toISOString(),
+  };
+  assert.ok(worker.queueBlockersFor(guideDraft, [recentGuide])
+    .includes('media-guide-rolling-7-day-limit-chaimbault-1'));
+  const oldGuide = { ...recentGuide, publishedAt: new Date(now.getTime() - 8 * 86_400_000).toISOString() };
+  assert.deepEqual(worker.queueBlockersFor(guideDraft, [oldGuide]), []);
+});
+
+test('publication automatique: les plafonds réseau séparent news et contenus non-news', () => {
+  const now = new Date('2026-08-12T16:00:00.000Z');
+  const worker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-network-quotas-'))),
+    now: () => now,
+  });
+  const newsReceipts = [
+    'chaimbault', 'tesla-tech', 'affiliation', 'logiciels', 'investissement', 'entreprise',
+    'chaimbault', 'tesla-tech',
+  ].map((mediaSlug) => ({
+    mediaSlug,
+    contentType: 'news',
+    publishedAt: '2026-08-12T08:00:00.000Z',
+  }));
+  const nonNewsReceipts = [
+    { mediaSlug: 'video-a', contentType: 'video', publishedAt: '2026-08-12T08:00:00.000Z' },
+    { mediaSlug: 'guide-b', contentType: 'guide', publishedAt: '2026-08-12T08:00:00.000Z' },
+  ];
+
+  const thirdExtraNewsBlockers = worker.queueBlockersFor({ mediaSlug: 'affiliation', contentType: 'news' }, newsReceipts);
+  assert.ok(thirdExtraNewsBlockers
+    .includes('network-news-daily-limit-8'));
+  assert.ok(thirdExtraNewsBlockers.includes('network-extra-news-daily-limit-2'));
+  assert.ok(worker.queueBlockersFor({ mediaSlug: 'fresh-video', contentType: 'video' }, nonNewsReceipts)
+    .includes('network-non-news-daily-limit-2'));
+  assert.ok(worker.queueBlockersFor({ mediaSlug: 'affiliation', contentType: 'news' }, [...newsReceipts, ...nonNewsReceipts])
+    .includes('network-daily-limit-10'));
+
+  const cooldownReceipt = [{
+    mediaSlug: 'logiciels',
+    contentType: 'news',
+    publishedAt: new Date(now.getTime() - 59 * 60_000).toISOString(),
+  }];
+  assert.ok(worker.queueBlockersFor({ mediaSlug: 'entreprise', contentType: 'news' }, cooldownReceipt)
+    .some((blocker) => blocker.startsWith('network-cooldown-until-')));
+  cooldownReceipt[0].publishedAt = new Date(now.getTime() - 61 * 60_000).toISOString();
+  assert.deepEqual(worker.queueBlockersFor({ mediaSlug: 'entreprise', contentType: 'news' }, cooldownReceipt), []);
+
+  const mediaCooldownReceipt = [{
+    mediaSlug: 'entreprise',
+    contentType: 'news',
+    publishedAt: new Date(now.getTime() - 239 * 60_000).toISOString(),
+  }];
+  assert.ok(worker.queueBlockersFor({ mediaSlug: 'entreprise', contentType: 'video' }, mediaCooldownReceipt)
+    .some((blocker) => blocker.startsWith('media-cooldown-entreprise-until-')));
+  mediaCooldownReceipt[0].publishedAt = new Date(now.getTime() - 241 * 60_000).toISOString();
+  assert.deepEqual(worker.queueBlockersFor({ mediaSlug: 'entreprise', contentType: 'video' }, mediaCooldownReceipt), []);
+});
+
+test('publication automatique: le plafond absolu bloque toute neuvième news, même la première d’un média', () => {
+  const now = new Date('2026-08-14T16:00:00.000Z');
+  const worker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-absolute-news-limit-'))),
+    now: () => now,
+  });
+  const receipts = [
+    'chaimbault', 'tesla-tech', 'affiliation', 'logiciels', 'investissement', 'entreprise',
+    'chaimbault', 'tesla-tech',
+  ].map((mediaSlug, index) => ({
+    mediaSlug,
+    contentType: 'news',
+    publishedAt: new Date(Date.parse('2026-08-14T08:00:00.000Z') + index * 61 * 60_000).toISOString(),
+  }));
+
+  const ninthNewsBlockers = worker.queueBlockersFor(
+    { mediaSlug: 'nouveau-media', contentType: 'news' },
+    receipts,
+  );
+  assert.ok(ninthNewsBlockers.includes('network-news-daily-limit-8'));
+  assert.ok(!ninthNewsBlockers.includes('network-extra-news-daily-limit-2'));
+});
+
+test('publication automatique: un seul non-news par média réserve la place de la première news', () => {
+  const now = new Date('2026-08-14T16:00:00.000Z');
+  const worker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-media-news-reservation-'))),
+    now: () => now,
+  });
+  const videoReceipt = [{
+    mediaSlug: 'entreprise',
+    contentType: 'video',
+    publishedAt: '2026-08-14T08:00:00.000Z',
+  }];
+
+  const guideBlockers = worker.queueBlockersFor({ mediaSlug: 'entreprise', contentType: 'guide' }, videoReceipt);
+  assert.ok(guideBlockers.includes('media-non-news-daily-limit-entreprise-1'));
+  assert.deepEqual(worker.queueBlockersFor({ mediaSlug: 'entreprise', contentType: 'news' }, videoReceipt), []);
+});
+
+test('publication automatique: un ancien reçu sans type ne consomme aucun quota de type', () => {
+  const now = new Date('2026-08-14T16:00:00.000Z');
+  const worker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-untyped-receipt-'))),
+    now: () => now,
+  });
+  const untypedReceipts = [
+    { mediaSlug: 'chaimbault', publishedAt: '2026-08-14T08:00:00.000Z' },
+    { mediaSlug: 'logiciels', publishedAt: '2026-08-14T09:00:00.000Z' },
+  ];
+
+  const blockers = worker.queueBlockersFor({ mediaSlug: 'entreprise', contentType: 'video' }, untypedReceipts);
+  assert.ok(!blockers.some((blocker) => blocker.startsWith('network-non-news-daily-limit-')));
+  assert.ok(!blockers.some((blocker) => blocker.startsWith('media-non-news-daily-limit-')));
+});
+
+test('publication automatique: le jour civil Europe/Paris reste exact à minuit et au changement DST', () => {
+  const midnightWorker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-paris-midnight-'))),
+    // 00:30 le 14 août à Paris.
+    now: () => new Date('2026-08-13T22:30:00.000Z'),
+  });
+  const midnightReceipts = [
+    // 23:50 le 13 août à Paris : veille locale.
+    { mediaSlug: 'chaimbault', contentType: 'news', publishedAt: '2026-08-13T21:50:00.000Z' },
+    // 00:05 et 00:10 le 14 août à Paris : jour local courant.
+    { mediaSlug: 'chaimbault', contentType: 'news', publishedAt: '2026-08-13T22:05:00.000Z' },
+    { mediaSlug: 'chaimbault', contentType: 'news', publishedAt: '2026-08-13T22:10:00.000Z' },
+  ];
+  const previousDayOnly = midnightWorker.queueBlockersFor(
+    { mediaSlug: 'chaimbault', contentType: 'news' },
+    [midnightReceipts[0]],
+  );
+  assert.ok(!previousDayOnly.some((blocker) => blocker.startsWith('media-news-daily-limit-')));
+  assert.ok(midnightWorker.queueBlockersFor({ mediaSlug: 'chaimbault', contentType: 'news' }, midnightReceipts)
+    .includes('media-news-daily-limit-chaimbault-2'));
+
+  const dstWorker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-paris-dst-'))),
+    // 02:30 CET après le recul d'heure du 25 octobre 2026.
+    now: () => new Date('2026-10-25T01:30:00.000Z'),
+  });
+  const dstReceipts = [
+    // 01:30 CEST puis 02:15 CET : même jour civil malgré deux offsets.
+    { mediaSlug: 'tesla-tech', contentType: 'news', publishedAt: '2026-10-24T23:30:00.000Z' },
+    { mediaSlug: 'tesla-tech', contentType: 'news', publishedAt: '2026-10-25T01:15:00.000Z' },
+  ];
+  assert.ok(dstWorker.queueBlockersFor({ mediaSlug: 'tesla-tech', contentType: 'news' }, dstReceipts)
+    .includes('media-news-daily-limit-tesla-tech-2'));
+});
+
+test('publication automatique: l’ancienne limite média reste compatible et explicite', () => {
+  const now = new Date('2026-08-12T16:00:00.000Z');
+  const worker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-legacy-quota-'))),
+    env: { MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT: '1' },
+    now: () => now,
+  });
+  const blockers = worker.queueBlockersFor({ mediaSlug: 'chaimbault', contentType: 'video' }, [{
+    mediaSlug: 'chaimbault',
+    contentType: 'news',
+    publishedAt: '2026-08-12T09:00:00.000Z',
+  }]);
+  assert.ok(blockers.includes('media-daily-limit-chaimbault-1'));
+  assert.ok(!blockers.some((blocker) => blocker.startsWith('media-video-daily-limit-')));
+});
+
+test('publication automatique: la priorité est première news, vidéo, seconde news, guide', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-publication-priority-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  let now = new Date('2026-08-12T16:00:00.000Z');
+  const common = {
+    publicationMode: 'draft',
+    generatedAt: '2026-08-12T08:00:00.000Z',
+    qa: { passed: true },
+    publicationEligibility: { status: 'eligible' },
+  };
+  for (const draft of [
+    { candidateId: 'old-guide', mediaSlug: 'entreprise', contentType: 'guide', slug: 'old-guide', title: 'Guide', scheduledPublishAt: '2026-08-12T08:00:00.000Z' },
+    { candidateId: 'first-news', mediaSlug: 'chaimbault', contentType: 'news', slug: 'first-news', title: 'Première news', scheduledPublishAt: '2026-08-12T08:30:00.000Z' },
+    { candidateId: 'second-news', mediaSlug: 'chaimbault', contentType: 'news', slug: 'second-news', title: 'Seconde news', scheduledPublishAt: '2026-08-12T09:00:00.000Z' },
+    { candidateId: 'fresh-video', mediaSlug: 'affiliation', contentType: 'video', slug: 'fresh-video', title: 'Vidéo', scheduledPublishAt: '2026-08-12T10:00:00.000Z' },
+  ]) store.saveDraft(draft.mediaSlug, { ...common, ...draft });
+
+  const worker = new PublicationWorker({
+    store,
+    env: {
+      MEDIA_ENGINE_PUBLICATION_MODE: 'automatic',
+      MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED: 'true',
+      MEDIA_ENGINE_PUSH_ENABLED: 'true',
+      MEDIA_ENGINE_SHADOW_STARTED_AT: '2026-08-01T00:00:00.000Z',
+      MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES: '1',
+      MEDIA_ENGINE_PUBLICATION_PER_MEDIA_MIN_INTERVAL_MINUTES: '1',
+    },
+    now: () => now,
+  });
+  worker.publishDraftPath = async (draftPath) => {
+    const draft = JSON.parse(readFileSync(draftPath, 'utf8'));
+    const receipt = {
+      status: 'published',
+      publishedAt: now.toISOString(),
+      mediaSlug: draft.mediaSlug,
+      contentType: draft.contentType,
+      slug: draft.slug,
+    };
+    now = new Date(now.getTime() + 2 * 60_000);
+    return receipt;
+  };
+  const result = await worker.run({ limit: 4 });
+  assert.deepEqual(result.results.map((entry) => entry.slug), [
+    'first-news',
+    'fresh-video',
+    'second-news',
+    'old-guide',
+  ]);
+});
+
+test('publication automatique: le scheduler sert les six médias avant les deux news supplémentaires', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'media-publication-six-first-news-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  let now = new Date('2026-08-14T16:00:00.000Z');
+  const common = {
+    publicationMode: 'draft',
+    generatedAt: '2026-08-14T06:00:00.000Z',
+    qa: { passed: true },
+    publicationEligibility: { status: 'eligible' },
+  };
+  const drafts = [
+    { candidateId: 'chaimbault-old', mediaSlug: 'chaimbault', contentType: 'news', slug: 'chaimbault-old', scheduledPublishAt: '2026-08-14T06:00:00.000Z' },
+    { candidateId: 'chaimbault-new', mediaSlug: 'chaimbault', contentType: 'news', slug: 'chaimbault-new', scheduledPublishAt: '2026-08-14T08:00:00.000Z' },
+    { candidateId: 'tesla-old', mediaSlug: 'tesla-tech', contentType: 'news', slug: 'tesla-old', scheduledPublishAt: '2026-08-14T06:05:00.000Z' },
+    { candidateId: 'tesla-new', mediaSlug: 'tesla-tech', contentType: 'news', slug: 'tesla-new', scheduledPublishAt: '2026-08-14T08:05:00.000Z' },
+    { candidateId: 'affiliation-first', mediaSlug: 'affiliation', contentType: 'news', slug: 'affiliation-first', scheduledPublishAt: '2026-08-14T09:00:00.000Z' },
+    { candidateId: 'logiciels-first', mediaSlug: 'logiciels', contentType: 'news', slug: 'logiciels-first', scheduledPublishAt: '2026-08-14T09:05:00.000Z' },
+    { candidateId: 'investissement-first', mediaSlug: 'investissement', contentType: 'news', slug: 'investissement-first', scheduledPublishAt: '2026-08-14T09:10:00.000Z' },
+    { candidateId: 'entreprise-first', mediaSlug: 'entreprise', contentType: 'news', slug: 'entreprise-first', scheduledPublishAt: '2026-08-14T09:15:00.000Z' },
+  ];
+  for (const draft of drafts) store.saveDraft(draft.mediaSlug, { ...common, ...draft });
+
+  const worker = new PublicationWorker({
+    store,
+    env: {
+      MEDIA_ENGINE_PUBLICATION_MODE: 'automatic',
+      MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED: 'true',
+      MEDIA_ENGINE_PUSH_ENABLED: 'true',
+      MEDIA_ENGINE_SHADOW_STARTED_AT: '2026-08-01T00:00:00.000Z',
+      MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES: '1',
+      MEDIA_ENGINE_PUBLICATION_PER_MEDIA_MIN_INTERVAL_MINUTES: '1',
+    },
+    now: () => now,
+  });
+  worker.publishDraftPath = async (draftPath) => {
+    const draft = JSON.parse(readFileSync(draftPath, 'utf8'));
+    const receipt = {
+      status: 'published',
+      publishedAt: now.toISOString(),
+      mediaSlug: draft.mediaSlug,
+      contentType: draft.contentType,
+      slug: draft.slug,
+    };
+    now = new Date(now.getTime() + 2 * 60_000);
+    return receipt;
+  };
+
+  const result = await worker.run({ limit: 8 });
+  assert.deepEqual(result.results.slice(0, 6).map((entry) => entry.mediaSlug), [
+    'chaimbault',
+    'tesla-tech',
+    'affiliation',
+    'logiciels',
+    'investissement',
+    'entreprise',
+  ]);
+  assert.deepEqual(result.results.slice(6).map((entry) => entry.slug), [
+    'chaimbault-new',
+    'tesla-new',
+  ]);
+});
+
 test('publication automatique: un lease interdit deux workers simultanés', async () => {
   const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-lease-')));
   store.initialize();
