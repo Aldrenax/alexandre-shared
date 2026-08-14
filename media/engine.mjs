@@ -17,6 +17,7 @@ import {
   findDraftConflict,
   findInternalLinkConflict,
   qualifyCandidate,
+  samePersistedNewsEvent,
 } from './candidates.mjs';
 import {
   ARTICLE_THUMBNAIL_POLICY,
@@ -450,7 +451,15 @@ export function normalizeEnrichedXEvidence(candidate, media, originalCandidate =
 }
 
 function candidatePoolKey(candidate) {
-  return `${candidate.mediaSlug}:${canonicalUrl(candidate.primaryUrl || '') || candidate.id}`;
+  return `${candidate.mediaSlug}:${candidate.id || canonicalUrl(candidate.primaryUrl || '')}`;
+}
+
+function persistedSourceKey(source = {}) {
+  const itemId = source.itemId ?? source.id;
+  if (source.kind === 'official-api' && source.sourceId && itemId != null) {
+    return `${source.sourceId}:${itemId}`;
+  }
+  return canonicalUrl(source.url);
 }
 
 function candidateSort(left, right) {
@@ -479,13 +488,33 @@ export function buildQualifiedCandidatePool({
     const target = mediaMap.get(payload?.mediaSlug);
     if (!target || !candidateIsFresh(payload, { now, maximumAgeHours })) continue;
     const sanitized = sanitizePersistedXEvidence(payload, target);
+    // Un ancien candidat déjà multi-source conserve son identité historique,
+    // mais ses preuves doivent toujours décrire le même événement selon la
+    // règle stricte actuelle. Une ancienne fusion ambiguë est exclue plutôt
+    // que séparée en deux eventKeys concurrents.
+    if ((sanitized.sources || []).length > 1) {
+      const sameEvent = sanitized.sources.every((source, index, sources) => sources
+        .slice(index + 1)
+        .every((other) => samePersistedNewsEvent(source, other, target)));
+      if (!sameEvent) continue;
+      const requalified = qualifyCandidate(sanitized, target, {
+        offers,
+        now,
+        minimumScore,
+        maxAgeHours: maximumAgeHours,
+      });
+      if (requalified.status === 'qualified') {
+        values.push({ ...requalified, firstSeenAt: payload.firstSeenAt, lastSeenAt: payload.lastSeenAt });
+      }
+      continue;
+    }
     const queuedItems = queuedItemsByMedia.get(target.slug) || [];
     const queuedOrigins = queuedOriginsByMedia.get(target.slug) || new Map();
     for (const source of sanitized.sources || []) {
       const url = source?.url || sanitized.primaryUrl;
       if (!url) continue;
       queuedItems.push({
-        id: `${sanitized.id}:${source.sourceId || canonicalUrl(url)}`,
+        id: source.itemId || `${sanitized.id}:${source.sourceId || canonicalUrl(url)}`,
         sourceId: source.sourceId,
         sourceTier: Number(source.tier),
         sourceOfficial: Boolean(source.official),
@@ -502,7 +531,7 @@ export function buildQualifiedCandidatePool({
           ?? validTimestamp(payload.qualifiedAt)
           ?? Number.MAX_SAFE_INTEGER,
       };
-      const originKey = canonicalUrl(url);
+      const originKey = persistedSourceKey({ ...source, url });
       const currentOrigin = queuedOrigins.get(originKey);
       if (!currentOrigin
         || origin.firstSeenAt < currentOrigin.firstSeenAt
@@ -513,19 +542,29 @@ export function buildQualifiedCandidatePool({
     queuedItemsByMedia.set(target.slug, queuedItems);
     queuedOriginsByMedia.set(target.slug, queuedOrigins);
   }
-  // Les candidats persistés ont parfois été créés séparément parce que leurs
-  // flux n'étaient pas modifiés au même cycle. On reconstruit leurs items puis
-  // on applique exactement le même clustering que lors d'une collecte fraîche,
-  // afin que deux confirmations indépendantes puissent se corroborer.
+  // Les candidats mono-source persistés ont parfois été créés séparément parce
+  // que leurs flux n'étaient pas modifiés au même cycle. On les regroupe en
+  // complete-link : chaque source doit correspondre à toutes les autres. Cela
+  // évite les chaînes transitives A~B~C et les collisions d'identité héritées.
   for (const [mediaSlug, queuedItems] of queuedItemsByMedia.entries()) {
     const target = mediaMap.get(mediaSlug);
     const queuedOrigins = queuedOriginsByMedia.get(mediaSlug) || new Map();
-    // Une file de 72 h contient davantage de sujets voisins qu'un seul flux
-    // instantané : le seuil est volontairement plus strict pour ne fusionner
-    // que des titres décrivant manifestement la même annonce.
-    for (const cluster of clusterCandidates(queuedItems, 0.58)) {
+    const groups = [];
+    const uniqueItems = [...new Map(queuedItems
+      .map((item) => [item.kind === 'official-api' && item.sourceId && item.id != null
+        ? `${item.sourceId}:${item.id}`
+        : canonicalUrl(item.url), item])).values()]
+      .sort((left, right) => canonicalUrl(left.url).localeCompare(canonicalUrl(right.url)));
+    for (const item of uniqueItems) {
+      const group = groups.find((candidate) => candidate
+        .every((existing) => samePersistedNewsEvent(existing, item, target)));
+      if (group) group.push(item);
+      else groups.push([item]);
+    }
+    for (const group of groups) {
+      const cluster = clusterCandidates(group, -1)[0];
       const origins = [...new Map(cluster.sources
-        .map((source) => queuedOrigins.get(canonicalUrl(source.url)))
+        .map((source) => queuedOrigins.get(persistedSourceKey(source)))
         .filter(Boolean)
         .map((origin) => [origin.id, origin])).values()]
         .sort((left, right) => left.firstSeenAt - right.firstSeenAt || left.id.localeCompare(right.id));

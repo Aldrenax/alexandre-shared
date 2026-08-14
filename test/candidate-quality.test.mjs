@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_CANDIDATE_AGE_HOURS,
   matchOffer,
   qualifyCandidate,
+  samePersistedNewsEvent,
   textMatchesKeyword,
 } from '../media/candidates.mjs';
 import { mediaBySlug } from '../media/registry.mjs';
@@ -76,6 +77,23 @@ test('matching offre: la même règle bornée évite IA dans India et PEA dans E
   assert.equal(matchOffer(secondaryCandidate({ title: 'India improves European reliability' }), offers, 'logiciels'), null);
   assert.equal(matchOffer(secondaryCandidate({ title: "L'IA arrive en France" }), offers, 'logiciels')?.id, 'ai');
   assert.equal(matchOffer(secondaryCandidate({ title: 'Le PEA finance les actions européennes' }), offers, 'logiciels')?.id, 'pea');
+});
+
+test('regroupement historique: des versions numériques contradictoires restent séparées', () => {
+  const left = {
+    sourceId: 'one',
+    title: 'OpenAI launches GPT-5.6 performance update with 14x speed',
+    url: 'https://one.test/gpt-56',
+    publishedAt: '2026-08-14T08:00:00.000Z',
+  };
+  const right = {
+    sourceId: 'two',
+    title: 'OpenAI launches GPT-5.7 performance update with 14x speed',
+    url: 'https://two.test/gpt-57',
+    publishedAt: '2026-08-14T09:00:00.000Z',
+  };
+
+  assert.equal(samePersistedNewsEvent(left, right, media({ topicKeywords: ['OpenAI', 'GPT'] })), false);
 });
 
 test('fraîcheur: 72 h par défaut, blocker explicite et maximum configurable', () => {

@@ -534,6 +534,28 @@ test('candidats: URL canonique, regroupement et source officielle obligatoire en
   assert.ok(rumor.blockers.includes('source-officielle-requise'));
 });
 
+test('candidats API: deux campagnes officielles partageant un endpoint gardent deux identités', () => {
+  const shared = {
+    sourceId: 'nhtsa-recalls',
+    sourceTier: 0,
+    sourceOfficial: true,
+    title: 'BACK OVER PREVENTION: SENSING SYSTEM: CAMERA',
+    url: 'https://api.nhtsa.gov/recalls/recallsByVehicle?make=Tesla',
+    excerpt: 'Campagne officielle.',
+    publishedAt: '2026-08-14T08:00:00.000Z',
+    media: ['tesla-tech'],
+    kind: 'official-api',
+  };
+  const clusters = clusterCandidates([
+    { ...shared, id: '24V935000' },
+    { ...shared, id: '26V315000' },
+  ]);
+
+  assert.equal(clusters.length, 2);
+  assert.notEqual(clusters[0].id, clusters[1].id);
+  assert.deepEqual(new Set(clusters.flatMap((cluster) => cluster.sources.map((source) => source.itemId))), new Set(['24V935000', '26V315000']));
+});
+
 test('candidats: une actualité officielle récente et thématique franchit le seuil qualité', () => {
   const now = new Date('2026-08-05T12:00:00.000Z');
   const candidate = qualifyCandidate(clusterCandidates([{

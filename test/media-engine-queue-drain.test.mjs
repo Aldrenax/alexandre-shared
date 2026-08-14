@@ -195,6 +195,105 @@ test('file: deux candidats secondaires persistés séparément sont regroupés e
   assert.equal(reversed[0].id, 'electrek-powerwall');
 });
 
+test('file: deux annonces proches mais distinctes ne fabriquent pas une corroboration', () => {
+  const now = new Date('2026-08-14T12:00:00.000Z');
+  const make = (id, title, url) => ({
+    id,
+    mediaSlug: 'tesla-tech',
+    title,
+    primaryUrl: url,
+    publishedAt: '2026-08-14T08:00:00.000Z',
+    firstSeenAt: '2026-08-14T09:00:00.000Z',
+    status: 'rejected',
+    sources: [{
+      sourceId: id,
+      tier: 2,
+      official: false,
+      title,
+      url,
+      excerpt: title,
+      publishedAt: '2026-08-14T08:00:00.000Z',
+      kind: 'news',
+    }],
+  });
+  const pool = buildQualifiedCandidatePool({
+    queueEntries: [
+      { payload: make('color', 'Tesla launches new Model Y color update', 'https://one.test/model-y-color') },
+      { payload: make('financing', 'Tesla launches new Model Y financing update', 'https://two.test/model-y-financing') },
+    ],
+    media: [mediaBySlug('tesla-tech')],
+    now,
+  });
+  assert.equal(pool.length, 0);
+});
+
+test('file: un ancien candidat multi-source ambigu est exclu sans collision d eventKey', () => {
+  const now = new Date('2026-08-14T12:00:00.000Z');
+  const source = (sourceId, title, url) => ({
+    sourceId,
+    tier: 2,
+    official: false,
+    title,
+    url,
+    excerpt: title,
+    publishedAt: '2026-08-14T08:00:00.000Z',
+    kind: 'news',
+  });
+  const pool = buildQualifiedCandidatePool({
+    queueEntries: [{ payload: {
+      id: 'legacy-mixed',
+      mediaSlug: 'tesla-tech',
+      title: 'Tesla Powerwall and Model Y updates',
+      primaryUrl: 'https://one.test/powerwall',
+      publishedAt: '2026-08-14T08:00:00.000Z',
+      firstSeenAt: '2026-08-14T09:00:00.000Z',
+      status: 'qualified',
+      sources: [
+        source('one', 'Tesla launches Powerwall home backup lease', 'https://one.test/powerwall'),
+        source('two', 'Tesla launches Model Y financing update', 'https://two.test/model-y-financing'),
+      ],
+    } }],
+    media: [mediaBySlug('tesla-tech')],
+    now,
+  });
+  assert.equal(pool.length, 0);
+});
+
+test('file: deux campagnes API distinctes gardent deux candidats malgré le même endpoint', () => {
+  const now = new Date('2026-08-14T12:00:00.000Z');
+  const make = (id) => ({
+    id: `candidate-${id}`,
+    mediaSlug: 'tesla-tech',
+    title: 'Tesla camera recall safety notice',
+    primaryUrl: 'https://api.nhtsa.gov/recalls/recallsByVehicle?make=Tesla',
+    publishedAt: '2026-08-14T08:00:00.000Z',
+    firstSeenAt: '2026-08-14T09:00:00.000Z',
+    status: 'qualified',
+    sources: [{
+      sourceId: 'nhtsa-recalls',
+      tier: 0,
+      official: true,
+      title: 'Tesla camera recall safety notice',
+      url: 'https://api.nhtsa.gov/recalls/recallsByVehicle?make=Tesla',
+      excerpt: 'Official safety campaign.',
+      publishedAt: '2026-08-14T08:00:00.000Z',
+      kind: 'official-api',
+      itemId: id,
+    }],
+  });
+  const pool = buildQualifiedCandidatePool({
+    queueEntries: [
+      { payload: make('24V935000') },
+      { payload: make('26V315000') },
+    ],
+    media: [mediaBySlug('tesla-tech')],
+    now,
+  });
+
+  assert.equal(pool.length, 2);
+  assert.deepEqual(new Set(pool.map((candidate) => candidate.id)), new Set(['candidate-24V935000', 'candidate-26V315000']));
+});
+
 test('cycle: un premier candidat sans preuve ne bloque plus le suivant de la file', async () => {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'media-queue-drain-'));
   const store = new MediaStateStore(runtimeDir);

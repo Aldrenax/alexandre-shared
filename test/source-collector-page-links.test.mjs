@@ -46,3 +46,30 @@ test('registre sources: Google Search Central utilise le RSS officiel', () => {
   assert.equal(googleSearchBlog.pageMode, undefined);
   assert.equal(googleSearchBlog.url, 'https://developers.google.com/search/blog/feed.xml');
 });
+
+test('collecteur API NHTSA: les dates jour-mois sont interprétées sans ambiguïté', async () => {
+  const source = {
+    id: 'nhtsa-recalls',
+    name: 'NHTSA Recalls API',
+    type: 'api',
+    url: 'https://api.nhtsa.gov/recalls',
+    tier: 0,
+    official: true,
+    media: ['tesla-tech'],
+  };
+  const response = {
+    ok: true,
+    status: 200,
+    url: source.url,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    text: async () => JSON.stringify({ results: [
+      { NHTSACampaignNumber: '24V935000', Component: 'CAMERA', ReportReceivedDate: '07/01/2025' },
+      { NHTSACampaignNumber: '26V315000', Component: 'SEAT BELTS', ReportReceivedDate: '19/05/2026' },
+    ] }),
+  };
+
+  const collected = await collectSource(source, { fetchImpl: async () => response });
+
+  assert.equal(collected.items[0].publishedAt, '2025-01-07T00:00:00.000Z');
+  assert.equal(collected.items[1].publishedAt, '2026-05-19T00:00:00.000Z');
+});

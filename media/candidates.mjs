@@ -6,6 +6,17 @@ const STOP_WORDS = new Set([
   'and', 'for', 'from', 'this', 'that', 'what', 'when', 'why',
 ]);
 
+const PERSISTED_EVENT_GENERIC_TOKENS = new Set([
+  'annonce', 'announced', 'announces', 'announcing',
+  'lance', 'lancement', 'launch', 'launched', 'launches', 'launching',
+  'publie', 'publication', 'publish', 'published', 'publishes',
+  'arrive', 'arrives', 'available', 'disponible',
+  'nouveau', 'nouvelle', 'nouveaux', 'nouvelles',
+  'official', 'officiel', 'officielle', 'update', 'updates',
+  'issue', 'issues', 'probleme', 'problemes', 'report', 'reports',
+  'recall', 'recalls', 'rappel', 'rappels',
+]);
+
 export const DEFAULT_MAX_CANDIDATE_AGE_HOURS = 72;
 
 const PRODUCT_SAFETY_KEYWORDS = Object.freeze([
@@ -53,6 +64,55 @@ export function similarity(left, right) {
   let intersection = 0;
   for (const value of a) if (b.has(value)) intersection += 1;
   return intersection / (a.size + b.size - intersection);
+}
+
+function persistedEventTokens(value, media) {
+  const topicTokens = tokens((media?.topicKeywords || []).join(' '));
+  return new Set([...tokens(value)].filter((word) => word.length >= 5
+    && !topicTokens.has(word)
+    && !PERSISTED_EVENT_GENERIC_TOKENS.has(word)));
+}
+
+function numericClaims(value) {
+  const claims = String(value || '').toLowerCase().match(/\b\d+(?:[.,]\d+)*(?:x|%|€|\$)?\b/g) || [];
+  return new Set(claims.map((claim) => claim.replace(',', '.')));
+}
+
+/**
+ * Un rapprochement historique doit être plus strict que le clustering d'un
+ * flux instantané. La similarité seule peut confondre deux annonces d'une
+ * même marque. On exige donc une fenêtre temporelle courte, deux termes
+ * descriptifs communs hors taxonomie du média et aucune valeur numérique
+ * contradictoire. Les groupes sont ensuite construits en complete-link.
+ */
+export function samePersistedNewsEvent(left, right, media, {
+  threshold = 0.58,
+  maximumGapHours = 48,
+  minimumSharedDiscriminants = 2,
+} = {}) {
+  if (left?.kind === 'official-api' && right?.kind === 'official-api'
+    && left?.sourceId === right?.sourceId
+    && left?.id != null && right?.id != null
+    && String(left.id) !== String(right.id)) return false;
+  if (canonicalUrl(left?.url) === canonicalUrl(right?.url)) return true;
+  const leftTime = Date.parse(left?.publishedAt || '');
+  const rightTime = Date.parse(right?.publishedAt || '');
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return false;
+  if (Math.abs(leftTime - rightTime) > maximumGapHours * 3_600_000) return false;
+  if (similarity(left?.title, right?.title) < threshold) return false;
+
+  const leftNumbers = numericClaims(left?.title);
+  const rightNumbers = numericClaims(right?.title);
+  if (leftNumbers.size && rightNumbers.size
+    && (leftNumbers.size !== rightNumbers.size
+      || [...leftNumbers].some((value) => !rightNumbers.has(value)))) return false;
+
+  if (normalizeText(left?.title) === normalizeText(right?.title)) return true;
+
+  const leftTerms = persistedEventTokens(left?.title, media);
+  const rightTerms = persistedEventTokens(right?.title, media);
+  const shared = [...leftTerms].filter((value) => rightTerms.has(value));
+  return shared.length >= minimumSharedDiscriminants;
 }
 
 function urlsFor(value = {}) {
@@ -117,16 +177,25 @@ export function canonicalUrl(rawUrl) {
   }
 }
 
-function clusterId(title, url) {
-  return createHash('sha256').update(`${normalizeText(title)}\n${canonicalUrl(url)}`).digest('hex').slice(0, 24);
+function itemIdentity(item = {}) {
+  if (item.kind === 'official-api' && item.sourceId && item.id != null) {
+    return `${item.sourceId}:${item.id}`;
+  }
+  return canonicalUrl(item.url) || `${item.sourceId}:${item.id}`;
+}
+
+function clusterId(item) {
+  return createHash('sha256').update(`${normalizeText(item.title)}\n${itemIdentity(item)}`).digest('hex').slice(0, 24);
 }
 
 export function dedupeItems(items = []) {
   const byKey = new Map();
   for (const item of items) {
-    const key = canonicalUrl(item.url) || `${item.sourceId}:${item.id}`;
+    const key = itemIdentity(item);
     const current = byKey.get(key);
-    if (!current || Number(item.sourceTier) < Number(current.sourceTier)) byKey.set(key, { ...item, url: key });
+    if (!current || Number(item.sourceTier) < Number(current.sourceTier)) {
+      byKey.set(key, { ...item, url: canonicalUrl(item.url) || item.url });
+    }
   }
   return [...byKey.values()];
 }
@@ -140,10 +209,18 @@ export function clusterCandidates(items = [], threshold = 0.46) {
   });
 
   for (const item of sorted) {
-    let cluster = clusters.find((candidate) => similarity(candidate.title, item.title) >= threshold);
+    let cluster = clusters.find((candidate) => {
+      const distinctApiRecord = item.kind === 'official-api' && candidate.sources.some((source) => (
+        source.kind === 'official-api'
+        && source.sourceId === item.sourceId
+        && source.itemId != null
+        && String(source.itemId) !== String(item.id)
+      ));
+      return !distinctApiRecord && similarity(candidate.title, item.title) >= threshold;
+    });
     if (!cluster) {
       cluster = {
-        id: clusterId(item.title, item.url),
+        id: clusterId(item),
         title: item.title,
         primaryUrl: canonicalUrl(item.url),
         publishedAt: item.publishedAt || null,
@@ -161,6 +238,7 @@ export function clusterCandidates(items = [], threshold = 0.46) {
       excerpt: item.excerpt || '',
       publishedAt: item.publishedAt || null,
       kind: item.kind || 'news',
+      itemId: item.id != null ? String(item.id) : null,
     });
     cluster.media = [...new Set([...cluster.media, ...(item.media || [])])];
     if (Number(item.sourceTier) < Number(cluster.sources[0]?.tier ?? 5)) {

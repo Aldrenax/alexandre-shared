@@ -94,6 +94,19 @@ function validDate(value, fallback = null) {
   return new Date(value).toISOString();
 }
 
+function validDayFirstDate(value, fallback = null) {
+  const match = String(value || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return fallback;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return fallback;
+  }
+  return date.toISOString();
+}
+
 function requestHeaders(previous = {}) {
   const headers = {
     Accept: 'application/rss+xml, application/atom+xml, application/json, text/html, */*;q=0.5',
@@ -239,7 +252,8 @@ function apiItems(payload, source) {
       title: decodeHtml(title),
       url: item.url || item.URL || source.url,
       excerpt: decodeHtml(excerpt).slice(0, 1_200),
-      publishedAt: validDate(item.publishedAt || item.date || item.ReportReceivedDate),
+      publishedAt: validDate(item.publishedAt || item.date)
+        || validDayFirstDate(item.ReportReceivedDate),
       author: source.name,
       media: source.media,
       kind: 'official-api',
