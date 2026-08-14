@@ -33,6 +33,13 @@ import { HermesClient } from './hermes-client.mjs';
 import { MediaStateStore, readJson } from './state-store.mjs';
 
 const X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657n;
+export const EVIDENCE_REVISION = 2;
+
+const EVIDENCE_RETRY_REASONS = new Set([
+  'corroboration-accessible-insuffisante',
+  'preuve-source-inaccessible',
+  'source-officielle-inaccessible',
+]);
 
 function normalizedXHandle(value = '') {
   return String(value).trim().replace(/^@/, '').toLowerCase();
@@ -298,6 +305,11 @@ export function shouldGenerateDraftForEvent(store, key, revision = EDITORIAL_REV
   const event = store.getEvent(key);
   if (!event) return true;
   if (event.status === 'retryable-failure') {
+    // Une nouvelle stratégie de preuve doit pouvoir reprendre immédiatement
+    // les candidats différés par l'ancienne version. Le re-traitement reste
+    // unique : le nouveau reçu persiste ensuite la révision courante.
+    if (EVIDENCE_RETRY_REASONS.has(event.reason)
+      && event.evidenceRevision !== EVIDENCE_REVISION) return true;
     if (['transcript-incomplete-caption-requested', 'transcript-unavailable-caption-requested'].includes(event.reason)
       && key.startsWith('video-draft:')) {
       const videoId = key.split(':').at(-1);
@@ -1538,6 +1550,7 @@ export class MediaEngine {
                   status: 'retryable-failure',
                   reason,
                   nextRetryAt: retryAt(2),
+                  evidenceRevision: EVIDENCE_REVISION,
                   editorialRevision: EDITORIAL_REVISION,
                   candidateId: candidate.id,
                 };

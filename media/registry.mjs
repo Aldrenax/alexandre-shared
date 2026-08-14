@@ -6,6 +6,7 @@ import {
 
 const SOURCE_TYPES = new Set(['rss', 'api', 'page', 'x']);
 const PAGE_MODES = new Set(['document', 'links', 'reference']);
+const PAGE_DATE_MODES = new Set(['published', 'modified']);
 const RISK_LEVELS = new Set([
   'standard',
   'commercial',
@@ -47,6 +48,7 @@ export function validateRegistry({ media = MEDIA_NETWORK, sources = MEDIA_SOURCE
     if (!source?.id || sourceIds.has(source.id)) errors.push(`source.id invalide ou dupliqué: ${source?.id}`);
     if (!SOURCE_TYPES.has(source?.type)) errors.push(`source.type invalide pour ${source?.id}: ${source?.type}`);
     if (source?.type === 'page' && source.pageMode && !PAGE_MODES.has(source.pageMode)) errors.push(`source.pageMode invalide pour ${source?.id}: ${source.pageMode}`);
+    if (source?.type === 'page' && source.pageDateMode && !PAGE_DATE_MODES.has(source.pageDateMode)) errors.push(`source.pageDateMode invalide pour ${source?.id}: ${source.pageDateMode}`);
     if (!Number.isInteger(source?.tier) || source.tier < 0 || source.tier > 4) errors.push(`source.tier invalide pour ${source?.id}`);
     try {
       new URL(source?.url);

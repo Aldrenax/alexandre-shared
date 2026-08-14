@@ -254,6 +254,10 @@ export const MEDIA_SOURCES = Object.freeze([
   // Entreprise et réglementation
   source({ id: 'service-public-pro', name: 'Service Public Entreprendre', type: 'rss', url: 'https://www.service-public.fr/abonnements/rss/actu-actu-pro.rss', tier: 0, official: true, media: ['entreprise'] }),
   source({ id: 'economie-actualites', name: 'Ministère de l’Économie — Actualités', type: 'rss', required: false, url: 'https://www.economie.gouv.fr/rss/toutesactualites', tier: 0, official: true, media: ['entreprise'] }),
+  // La page détaillée du ministère peut refuser les requêtes du VPS alors
+  // que cette fiche DGFiP reste accessible et documente le dispositif. Sa
+  // date de modification constitue l'événement, pas sa date de création 2024.
+  source({ id: 'impots-c3iv', name: 'impots.gouv.fr — C3IV', type: 'page', pageDateMode: 'modified', required: false, url: 'https://www.impots.gouv.fr/professionnel/questions/puis-je-pretendre-au-credit-dimpot-au-titre-des-investissements-en-faveur', tier: 0, official: true, media: ['entreprise'] }),
   source({ id: 'bofip-rss', name: 'BOFiP Flux RSS', type: 'rss', required: false, url: 'https://bofip.impots.gouv.fr/bofip/ext/rss/last-rss.xml', tier: 1, official: true, media: ['entreprise'] }),
   source({ id: 'legifrance-api', name: 'Légifrance Open Data et API', type: 'page', pageMode: 'reference', required: false, url: 'https://www.legifrance.gouv.fr/contenu/pied-de-page/open-data-et-api', tier: 1, official: true, media: ['entreprise'] }),
   source({ id: 'urssaf-news', name: 'Urssaf Actualités', type: 'page', pageMode: 'links', required: false, url: 'https://www.urssaf.fr/accueil/actualites.html', tier: 1, official: true, media: ['entreprise'] }),

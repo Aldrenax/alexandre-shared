@@ -69,6 +69,42 @@ test('registre sources: les flux officiels complémentaires sont RSS et optionne
   assert.equal(bofip.url, 'https://bofip.impots.gouv.fr/bofip/ext/rss/last-rss.xml');
 });
 
+test('registre sources: la fiche C3IV utilise sa modification officielle comme date', () => {
+  const source = MEDIA_SOURCES.find((entry) => entry.id === 'impots-c3iv');
+
+  assert.equal(source.type, 'page');
+  assert.equal(source.pageDateMode, 'modified');
+  assert.equal(source.official, true);
+  assert.equal(source.tier, 0);
+  assert.equal(source.required, false);
+});
+
+test('collecteur page: une modification datée reste un événement frais et prouvé', async () => {
+  const source = {
+    id: 'official-updated-document', name: 'Fiche officielle', type: 'page',
+    pageDateMode: 'modified', url: 'https://official.example/dispositif',
+    tier: 0, official: true, media: ['entreprise'],
+  };
+  const html = `
+    <html><head>
+      <title>Crédit d'impôt pour l'industrie verte</title>
+      <meta property="article:published_time" content="2024-03-26T00:00:00Z">
+      <meta name="description" content="Conditions, taux et procédure du dispositif officiel.">
+    </head><body><main>
+      <p>Publié le 26/03/2024, modifié le 11/08/2026</p>
+      <p>Le dispositif officiel détaille les entreprises et investissements éligibles.</p>
+    </main></body></html>`;
+  const response = {
+    ok: true, status: 200, url: source.url,
+    headers: new Headers({ 'content-type': 'text/html' }), text: async () => html,
+  };
+
+  const collected = await collectSource(source, { fetchImpl: async () => response });
+
+  assert.equal(collected.items.length, 1);
+  assert.equal(collected.items[0].publishedAt, '2026-08-11T00:00:00.000Z');
+});
+
 test('registre sources: Search Engine Land reste une source secondaire optionnelle', () => {
   const source = MEDIA_SOURCES.find((entry) => entry.id === 'search-engine-land');
 

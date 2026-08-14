@@ -191,10 +191,19 @@ function pageMetadata(html, source, previous = {}) {
     html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)/i)?.[1]
       || '',
   );
-  const publishedAt = validDate(
+  const declaredPublishedAt = validDate(
     html.match(/<meta[^>]+property=["']article:published_time["'][^>]+content=["']([^"']+)/i)?.[1]
       || html.match(/"datePublished"\s*:\s*"([^"]+)"/i)?.[1],
   );
+  const readableText = decodeHtml(withoutBoilerplate(html));
+  const visibleModifiedAt = readableText.match(/modifi(?:é|e)\s+le\s+(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
+  const declaredModifiedAt = validDate(
+    html.match(/<meta[^>]+property=["']article:modified_time["'][^>]+content=["']([^"']+)/i)?.[1]
+      || html.match(/"dateModified"\s*:\s*"([^"]+)"/i)?.[1],
+  ) || validDayFirstDate(visibleModifiedAt);
+  const publishedAt = source.pageDateMode === 'modified'
+    ? declaredModifiedAt || declaredPublishedAt
+    : declaredPublishedAt;
   const contentHash = digest(html.replace(/\s+/g, ' '));
   const changed = Boolean(previous.contentHash && previous.contentHash !== contentHash);
   return {

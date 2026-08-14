@@ -39,6 +39,7 @@ import { guideCandidate, selectGuideOpportunity } from '../media/guide-planner.m
 import { publicUrlForDraft, PublicationWorker, siteConfigsFromPayload } from '../media/publication-worker.mjs';
 import {
   downloadFirstAvailableAsset,
+  EVIDENCE_REVISION,
   materializeBanner,
   MediaEngine,
   offerForUrl,
@@ -682,6 +683,26 @@ test('cycle vidéo: un ancien blocage sans motif est repris une seule fois', () 
     editorialRevision: EDITORIAL_REVISION,
   });
   assert.equal(shouldGenerateDraftForEvent(store, 'video-draft:chaimbault:legacy'), false);
+});
+
+test('cycle actualité: une nouvelle révision de preuve reprend un report une seule fois', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-evidence-revision-')));
+  const key = 'draft:entreprise:c3iv:news';
+  store.markEvent(key, {
+    status: 'retryable-failure',
+    reason: 'source-officielle-inaccessible',
+    nextRetryAt: '2099-01-01T00:00:00.000Z',
+    evidenceRevision: EVIDENCE_REVISION - 1,
+  });
+  assert.equal(shouldGenerateDraftForEvent(store, key), true);
+
+  store.markEvent(key, {
+    status: 'retryable-failure',
+    reason: 'source-officielle-inaccessible',
+    nextRetryAt: '2099-01-01T00:00:00.000Z',
+    evidenceRevision: EVIDENCE_REVISION,
+  });
+  assert.equal(shouldGenerateDraftForEvent(store, key), false);
 });
 
 test('cycle vidéo: une transcription tronquée bascule vers les sous-titres officiels', () => {
