@@ -190,6 +190,15 @@ test('taxonomie: GPT et les paiements BCE sont reconnus sans sous-chaîne ambigu
   assert.equal(software.status, 'qualified');
   assert.ok(software.keywordMatches.includes('GPT'));
 
+  const hub = qualifyCandidate(
+    official('OpenAI annonce GPT pour les créateurs et entrepreneurs', 'https://openai.com/index/gpt-creators'),
+    mediaBySlug('chaimbault'),
+    { now: NOW },
+  );
+  assert.equal(hub.status, 'qualified');
+  assert.ok(hub.keywordMatches.includes('OpenAI'));
+  assert.ok(hub.keywordMatches.includes('GPT'));
+
   const finance = qualifyCandidate(
     official('Cash remains the most widely accepted payment method in the euro area', 'https://ecb.europa.eu/press/cash'),
     mediaBySlug('investissement'),

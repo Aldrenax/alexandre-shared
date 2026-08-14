@@ -472,19 +472,74 @@ export function buildQualifiedCandidatePool({
 } = {}) {
   const mediaMap = new Map(media.map((item) => [item.slug, item]));
   const values = [];
+  const queuedItemsByMedia = new Map();
+  const queuedOriginsByMedia = new Map();
   for (const entry of queueEntries) {
     const payload = entry?.payload;
     const target = mediaMap.get(payload?.mediaSlug);
     if (!target || !candidateIsFresh(payload, { now, maximumAgeHours })) continue;
     const sanitized = sanitizePersistedXEvidence(payload, target);
-    const requalified = qualifyCandidate(sanitized, target, {
-      offers,
-      now,
-      minimumScore,
-      maxAgeHours: maximumAgeHours,
-    });
-    if (requalified.status === 'qualified') {
-      values.push({ ...requalified, firstSeenAt: payload.firstSeenAt, lastSeenAt: payload.lastSeenAt });
+    const queuedItems = queuedItemsByMedia.get(target.slug) || [];
+    const queuedOrigins = queuedOriginsByMedia.get(target.slug) || new Map();
+    for (const source of sanitized.sources || []) {
+      const url = source?.url || sanitized.primaryUrl;
+      if (!url) continue;
+      queuedItems.push({
+        id: `${sanitized.id}:${source.sourceId || canonicalUrl(url)}`,
+        sourceId: source.sourceId,
+        sourceTier: Number(source.tier),
+        sourceOfficial: Boolean(source.official),
+        title: source.title || sanitized.title,
+        url,
+        excerpt: source.excerpt || '',
+        publishedAt: source.publishedAt || sanitized.publishedAt || null,
+        media: [target.slug],
+        kind: source.kind || 'news',
+      });
+      const origin = {
+        id: sanitized.id,
+        firstSeenAt: validTimestamp(payload.firstSeenAt)
+          ?? validTimestamp(payload.qualifiedAt)
+          ?? Number.MAX_SAFE_INTEGER,
+      };
+      const originKey = canonicalUrl(url);
+      const currentOrigin = queuedOrigins.get(originKey);
+      if (!currentOrigin
+        || origin.firstSeenAt < currentOrigin.firstSeenAt
+        || (origin.firstSeenAt === currentOrigin.firstSeenAt && origin.id < currentOrigin.id)) {
+        queuedOrigins.set(originKey, origin);
+      }
+    }
+    queuedItemsByMedia.set(target.slug, queuedItems);
+    queuedOriginsByMedia.set(target.slug, queuedOrigins);
+  }
+  // Les candidats persistés ont parfois été créés séparément parce que leurs
+  // flux n'étaient pas modifiés au même cycle. On reconstruit leurs items puis
+  // on applique exactement le même clustering que lors d'une collecte fraîche,
+  // afin que deux confirmations indépendantes puissent se corroborer.
+  for (const [mediaSlug, queuedItems] of queuedItemsByMedia.entries()) {
+    const target = mediaMap.get(mediaSlug);
+    const queuedOrigins = queuedOriginsByMedia.get(mediaSlug) || new Map();
+    // Une file de 72 h contient davantage de sujets voisins qu'un seul flux
+    // instantané : le seuil est volontairement plus strict pour ne fusionner
+    // que des titres décrivant manifestement la même annonce.
+    for (const cluster of clusterCandidates(queuedItems, 0.58)) {
+      const origins = [...new Map(cluster.sources
+        .map((source) => queuedOrigins.get(canonicalUrl(source.url)))
+        .filter(Boolean)
+        .map((origin) => [origin.id, origin])).values()]
+        .sort((left, right) => left.firstSeenAt - right.firstSeenAt || left.id.localeCompare(right.id));
+      // Le premier candidat observé reste l'identité stable du sujet. Ajouter
+      // ensuite une source de meilleur tier ne change donc ni l'eventKey ni
+      // l'historique de retry/idempotence.
+      if (origins.length) cluster.id = origins[0].id;
+      const requalified = qualifyCandidate(cluster, target, {
+        offers,
+        now,
+        minimumScore,
+        maxAgeHours: maximumAgeHours,
+      });
+      if (requalified.status === 'qualified') values.push(requalified);
     }
   }
   for (const candidate of currentCandidates) {

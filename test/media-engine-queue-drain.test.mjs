@@ -146,12 +146,61 @@ test('cycle: un candidat rejeté avant une correction de taxonomie est requalifi
   assert.equal(result.drafts[0].candidateId, 'requalified-from-rejected');
 });
 
+test('file: deux candidats secondaires persistés séparément sont regroupés et corroborés', () => {
+  const now = new Date('2026-08-14T12:00:00.000Z');
+  const publishedAt = '2026-08-13T18:48:34.000Z';
+  const payload = (id, title, sourceId, url, firstSeenAt, { tier = 2, official = false } = {}) => ({
+    id,
+    mediaSlug: 'tesla-tech',
+    title,
+    primaryUrl: url,
+    publishedAt,
+    firstSeenAt,
+    status: 'rejected',
+    sources: [{
+      sourceId,
+      tier,
+      official,
+      title,
+      url,
+      excerpt: 'Une nouvelle offre résidentielle Tesla Powerwall.',
+      publishedAt,
+      kind: 'news',
+    }],
+  });
+  const pool = buildQualifiedCandidatePool({
+    queueEntries: [
+      { payload: payload('teslarati-powerwall', 'Tesla launches Powerwall Lease for affordable home backup', 'teslarati', 'https://teslarati.test/powerwall-lease', '2026-08-13T19:00:00.000Z') },
+      { payload: payload('electrek-powerwall', 'Tesla Electric launches Powerwall whole-home backup lease', 'electrek', 'https://electrek.test/powerwall-lease', '2026-08-13T18:00:00.000Z') },
+      { payload: payload('tesla-official-powerwall', 'Tesla launches Powerwall whole-home backup lease', 'tesla', 'https://tesla.test/powerwall-lease', '2026-08-14T08:00:00.000Z', { tier: 1, official: true }) },
+    ],
+    media: [mediaBySlug('tesla-tech')],
+    now,
+  });
+  assert.equal(pool.length, 1);
+  assert.equal(pool[0].status, 'qualified');
+  assert.equal(pool[0].independentSourceCount, 3);
+  assert.equal(pool[0].officialRequired, false);
+  assert.equal(pool[0].id, 'electrek-powerwall');
+
+  const reversed = buildQualifiedCandidatePool({
+    queueEntries: [...[
+      { payload: payload('teslarati-powerwall', 'Tesla launches Powerwall Lease for affordable home backup', 'teslarati', 'https://teslarati.test/powerwall-lease', '2026-08-13T19:00:00.000Z') },
+      { payload: payload('electrek-powerwall', 'Tesla Electric launches Powerwall whole-home backup lease', 'electrek', 'https://electrek.test/powerwall-lease', '2026-08-13T18:00:00.000Z') },
+      { payload: payload('tesla-official-powerwall', 'Tesla launches Powerwall whole-home backup lease', 'tesla', 'https://tesla.test/powerwall-lease', '2026-08-14T08:00:00.000Z', { tier: 1, official: true }) },
+    ]].reverse(),
+    media: [mediaBySlug('tesla-tech')],
+    now,
+  });
+  assert.equal(reversed[0].id, 'electrek-powerwall');
+});
+
 test('cycle: un premier candidat sans preuve ne bloque plus le suivant de la file', async () => {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'media-queue-drain-'));
   const store = new MediaStateStore(runtimeDir);
   store.initialize();
-  const first = officialCandidate('first', 'OpenAI annonce un logiciel SaaS marketing', 'https://openai.com/index/first');
-  const second = officialCandidate('second', 'OpenAI annonce un logiciel de productivité', 'https://openai.com/index/second');
+  const first = officialCandidate('first', 'OpenAI lance un outil de marketing SaaS', 'https://openai.com/index/first');
+  const second = officialCandidate('second', 'GitHub annonce une application de productivité', 'https://github.blog/changelog/second');
   store.upsertObserved('qualified', 'logiciels-first', first);
   store.upsertObserved('qualified', 'logiciels-second', second);
 

@@ -32,6 +32,7 @@ export const MEDIA_NETWORK = Object.freeze([
     topicKeywords: [
       'entrepreneur', 'intelligence artificielle', 'IA', 'SaaS', 'YouTube',
       'creator economy', 'productivité', 'automatisation', 'business',
+      'OpenAI', 'ChatGPT', 'GPT', 'Copilot', 'Gemini', 'agent IA',
     ],
     xQueries: [
       'actualités officielles intelligence artificielle SaaS créateurs entrepreneurs France',
