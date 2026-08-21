@@ -193,6 +193,22 @@ function principalPath(draft) {
   return `/${route}/${draft.slug}/`;
 }
 
+export function withVerifiedSourceDate(store, draft) {
+  if (draft?.contentType !== 'news' || Number.isFinite(Date.parse(draft.sourcePublishedAt || ''))) return draft;
+  const queueId = `${draft.mediaSlug}-${draft.candidateId}`;
+  const candidate = readJson(store.queuePath('qualified', queueId), null)
+    || readJson(store.queuePath('candidates', queueId), null);
+  const sourceUrls = new Set(httpsUrls(draft.sourceUrls));
+  const matchingOfficialSource = (candidate?.sources || []).find((source) => (
+    source?.official === true
+    && sourceUrls.has(safeHref(source.url))
+    && Number.isFinite(Date.parse(source.publishedAt || ''))
+  ));
+  const publishedAt = candidate?.publishedAt || matchingOfficialSource?.publishedAt;
+  if (!matchingOfficialSource || !Number.isFinite(Date.parse(publishedAt || ''))) return draft;
+  return { ...draft, sourcePublishedAt: new Date(publishedAt).toISOString() };
+}
+
 export function payloadForWordPressDraft(draft, { featuredMediaId = 0 } = {}) {
   if (draft?.mediaSlug !== PRINCIPAL_MEDIA_SLUG) throw new Error('Le shadow WordPress est limité au site principal');
   if (!draft?.qa?.passed) throw new Error('Le brouillon doit avoir passé la QA');
@@ -349,8 +365,9 @@ export class WordPressDraftPublisher {
   async mirrorDraftPath(draftPath, { dryRun = false, featuredMediaId = 0 } = {}) {
     const absoluteDraftPath = resolve(draftPath);
     if (!existsSync(absoluteDraftPath)) throw new Error(`Brouillon introuvable: ${absoluteDraftPath}`);
-    const draft = readJson(absoluteDraftPath, null);
+    let draft = readJson(absoluteDraftPath, null);
     if (!draft) throw new Error('Brouillon JSON invalide');
+    draft = withVerifiedSourceDate(this.store, draft);
     if (draft.publicationEligibility?.status !== 'eligible') throw new Error('Seuls les brouillons éligibles sont envoyés au shadow WordPress');
     const assetManifest = featuredMediaId ? null : assetForWordPressDraft(draft, { includeBytes: false });
     if (dryRun) {

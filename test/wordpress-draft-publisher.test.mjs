@@ -9,6 +9,7 @@ import {
   assetForWordPressDraft,
   payloadForWordPressDraft,
   renderWordPressContent,
+  withVerifiedSourceDate,
   WordPressDraftClient,
   WordPressDraftPublisher,
 } from '../media/wordpress-draft-publisher.mjs';
@@ -98,6 +99,27 @@ test('la bannière locale devient un asset borné et vérifié par SHA-256', () 
   assert.equal(Buffer.from(asset.bytes_base64, 'base64').toString(), 'fixture-image-bytes');
   assert.equal(asset.asset_id, 'media-engine:chaimbault:news:candidate-123:banner');
   assert.equal(assetForWordPressDraft(draft({ contentType: 'video' })), null);
+});
+
+test('une ancienne actualité récupère uniquement une date issue de sa source officielle qualifiée', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-source-date-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  store.enqueue('qualified', 'chaimbault-candidate-123', {
+    publishedAt: '2026-08-20T09:30:00.000Z',
+    sources: [{
+      official: true,
+      url: 'https://example.com/annonce',
+      publishedAt: '2026-08-20T09:30:00.000Z',
+    }],
+  });
+  const enriched = withVerifiedSourceDate(store, draft({ sourcePublishedAt: null }));
+  assert.equal(enriched.sourcePublishedAt, '2026-08-20T09:30:00.000Z');
+  const unverified = withVerifiedSourceDate(store, draft({
+    candidateId: 'unknown',
+    sourcePublishedAt: null,
+  }));
+  assert.equal(unverified.sourcePublishedAt, null);
 });
 
 test('le client et le publisher prouvent le mode draft-only sans exposer le mot de passe', async () => {
