@@ -1,0 +1,11 @@
+[Unit]
+Description=Hermes Media Engine - synchronisation des brouillons WordPress
+
+[Timer]
+OnCalendar=*-*-* *:0/10
+RandomizedDelaySec=60s
+Persistent=true
+Unit=alexandre-wordpress-draft.service
+
+[Install]
+WantedBy=timers.target

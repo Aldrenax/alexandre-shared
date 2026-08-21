@@ -1,0 +1,31 @@
+[Unit]
+Description=Hermes Media Engine - brouillons du site principal vers WordPress
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/alexandre-media-engine/current
+EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
+EnvironmentFile=-/etc/alexandre-media-engine/shadow.env
+EnvironmentFile=-/etc/alexandre-media-engine/publication.env
+EnvironmentFile=/etc/alexandre-media-engine/wordpress-shadow.env
+ExecStartPre=/opt/alexandre-media-engine/current/bin/ensure-hermes-log-permissions.sh
+ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs wordpress-shadow --limit 3 --json
+TimeoutStartSec=30min
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadOnlyPaths=/opt/alexandre-media-engine/current /var/lib/hermes-agent/business-data
+ReadWritePaths=/var/lib/alexandre-media-engine /var/lib/hermes-agent/media-engine
+

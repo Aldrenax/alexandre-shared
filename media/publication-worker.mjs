@@ -51,6 +51,10 @@ function positiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function commaSeparatedSet(value) {
+  return new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean));
+}
+
 function dayKey(value, timeZone = 'Europe/Paris') {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -134,6 +138,9 @@ export class PublicationWorker {
       now: this.now(),
     });
     if (!boolean(this.env.MEDIA_ENGINE_PUSH_ENABLED)) decision.blockers.push('git-push-disabled');
+    if (commaSeparatedSet(this.env.MEDIA_ENGINE_GIT_EXCLUDED_SLUGS).has(draft.mediaSlug)) {
+      decision.blockers.push(`git-publisher-excluded:${draft.mediaSlug}`);
+    }
     const cutoverAt = Date.parse(this.env.MEDIA_ENGINE_AUTOMATIC_CUTOVER_AT || '');
     const generatedAt = Date.parse(draft.generatedAt || '');
     if (draft.contentType === 'video'

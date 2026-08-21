@@ -1083,6 +1083,15 @@ test('publication VPS: npm utilise le cache runtime autorisé par systemd', () =
   assert.match(unit, /^ReadWritePaths=.*\/var\/lib\/alexandre-media-engine(?:\s|$)/m);
 });
 
+test('WordPress principal: le timer charge le secret dédié et reste limité aux brouillons', () => {
+  const service = readFileSync(new URL('../deploy/systemd/alexandre-wordpress-draft.service', import.meta.url), 'utf8');
+  const timer = readFileSync(new URL('../deploy/systemd/alexandre-wordpress-draft.timer', import.meta.url), 'utf8');
+  assert.match(service, /^EnvironmentFile=\/etc\/alexandre-media-engine\/wordpress-shadow\.env$/m);
+  assert.match(service, /media-engine\.mjs wordpress-shadow --limit 3 --json/);
+  assert.match(service, /^NoNewPrivileges=true$/m);
+  assert.match(timer, /^OnCalendar=\*-\*-\* \*:0\/10$/m);
+});
+
 test('publication VPS: le CLI conserve le résultat pour enregistrer le cycle', () => {
   const cli = readFileSync(new URL('../bin/media-engine.mjs', import.meta.url), 'utf8');
   assert.match(cli, /result = draftPath\s*\? await worker\.publishDraftPath/);
@@ -1171,6 +1180,22 @@ test('publication VPS: URL, période d’observation, autorisation et push sont 
   });
   const allowedResult = await allowed.publishDraftPath(path, { dryRun: true });
   assert.equal(allowedResult.allowed, true);
+
+  const wordpressPrimary = new PublicationWorker({
+    store,
+    siteConfigs: sites,
+    env: {
+      MEDIA_ENGINE_PUBLICATION_MODE: 'automatic',
+      MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED: 'true',
+      MEDIA_ENGINE_PUSH_ENABLED: 'true',
+      MEDIA_ENGINE_GIT_EXCLUDED_SLUGS: 'chaimbault, logiciels',
+      MEDIA_ENGINE_SHADOW_STARTED_AT: '2026-07-01T00:00:00.000Z',
+    },
+    now: () => new Date('2026-08-05T00:00:00.000Z'),
+  });
+  const wordpressPrimaryResult = await wordpressPrimary.publishDraftPath(path, { dryRun: true });
+  assert.equal(wordpressPrimaryResult.allowed, false);
+  assert.ok(wordpressPrimaryResult.decision.blockers.includes('git-publisher-excluded:logiciels'));
 
   const automaticQueue = await allowed.run({ dryRun: true });
   assert.equal(automaticQueue.results.length, 0);
