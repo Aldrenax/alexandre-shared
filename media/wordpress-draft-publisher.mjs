@@ -3,9 +3,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
 import { readJson, writeJsonAtomic } from './state-store.mjs';
 
-const PRINCIPAL_MEDIA_SLUG = 'chaimbault';
-const WORDPRESS_TYPES = Object.freeze({ news: 'article', video: 'video', guide: 'guide' });
-const WORDPRESS_ROUTES = Object.freeze({ news: 'blog', video: 'videos', guide: 'guides' });
+export const WORDPRESS_TARGETS = Object.freeze({
+  chaimbault: Object.freeze({ siteKey: 'principal', domain: 'alexandrechaimbault.com', stagingPath: '/', newsType: 'article', newsRoute: 'blog' }),
+  affiliation: Object.freeze({ siteKey: 'affiliation', domain: 'alexandre-affiliation.fr', stagingPath: '/affiliation/', newsType: 'actualite', newsRoute: 'actualites' }),
+  logiciels: Object.freeze({ siteKey: 'logiciels', domain: 'alexandre-logiciels.fr', stagingPath: '/logiciels/', newsType: 'actualite', newsRoute: 'actualites' }),
+  entreprise: Object.freeze({ siteKey: 'entreprise', domain: 'alexandre-entreprise.fr', stagingPath: '/entreprise/', newsType: 'actualite', newsRoute: 'actualites' }),
+  'tesla-tech': Object.freeze({ siteKey: 'tesla', domain: 'alexandre-tesla.fr', stagingPath: '/tesla/', newsType: 'actualite', newsRoute: 'actualites' }),
+  investissement: Object.freeze({ siteKey: 'investissement', domain: 'alexandre-investissement.fr', stagingPath: '/investissement/', newsType: 'actualite', newsRoute: 'actualites' }),
+});
 const EDITORIAL_HEADINGS = Object.freeze({
   news: ['Ce qui est confirmé', 'Pourquoi c’est important', 'Ce que cela change', 'Sources et méthode'],
   video: ['La vidéo en bref', 'Transcription détaillée', 'Le point clé', 'Pour aller plus loin'],
@@ -187,8 +192,15 @@ function httpsUrls(values) {
   return [...new Set((values || []).map(safeHref).filter((url) => url?.startsWith('https://')))];
 }
 
-function principalPath(draft) {
-  const route = WORDPRESS_ROUTES[draft.contentType];
+export function wordpressTarget(draft) {
+  const target = WORDPRESS_TARGETS[String(draft?.mediaSlug || '')];
+  if (!target) throw new Error(`Média WordPress non pris en charge: ${draft?.mediaSlug}`);
+  return target;
+}
+
+function publicPath(draft, target) {
+  const routes = { news: target.newsRoute, video: 'videos', guide: 'guides' };
+  const route = routes[draft.contentType];
   if (!route || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(String(draft.slug || ''))) throw new Error('Slug WordPress invalide');
   return `/${route}/${draft.slug}/`;
 }
@@ -210,11 +222,11 @@ export function withVerifiedSourceDate(store, draft) {
 }
 
 export function payloadForWordPressDraft(draft, { featuredMediaId = 0 } = {}) {
-  if (draft?.mediaSlug !== PRINCIPAL_MEDIA_SLUG) throw new Error('Le shadow WordPress est limité au site principal');
+  const target = wordpressTarget(draft);
   if (!draft?.qa?.passed) throw new Error('Le brouillon doit avoir passé la QA');
-  const postType = WORDPRESS_TYPES[draft.contentType];
+  const postType = { news: target.newsType, video: 'video', guide: 'guide' }[draft.contentType];
   if (!postType) throw new Error(`Type WordPress non pris en charge: ${draft.contentType}`);
-  const publicPath = principalPath(draft);
+  const routePath = publicPath(draft, target);
   const sourceUrls = httpsUrls(draft.sourceUrls);
   if (draft.contentType === 'news' && (!sourceUrls.length || !Number.isFinite(Date.parse(draft.sourcePublishedAt || '')))) {
     throw new Error('Une actualité WordPress exige ses sources et leur date de publication');
@@ -237,15 +249,15 @@ export function payloadForWordPressDraft(draft, { featuredMediaId = 0 } = {}) {
     featured_media: Number.isInteger(featuredMediaId) && featuredMediaId > 0 ? featuredMediaId : 0,
     category_ids: [],
     tag_ids: [],
-    site_key: 'principal',
+    site_key: target.siteKey,
     media_slug: draft.mediaSlug,
     editorial_contract_version: '1.0.0',
     source_id: String(draft.candidateId || ''),
     source_urls: sourceUrls,
     source_status: 'qa-passed',
     content_hash: createHash('sha256').update(content).digest('hex'),
-    public_path: publicPath,
-    canonical_url: `https://alexandrechaimbault.com${publicPath}`,
+    public_path: routePath,
+    canonical_url: `https://${target.domain}${routePath}`,
     seo_title: String(draft.title || '').trim(),
     meta_description: String(draft.description || '').trim(),
     generated_at: draft.generatedAt || '',
@@ -271,7 +283,7 @@ export function payloadForWordPressDraft(draft, { featuredMediaId = 0 } = {}) {
 }
 
 export function assetForWordPressDraft(draft, { includeBytes = true } = {}) {
-  if (draft?.mediaSlug !== PRINCIPAL_MEDIA_SLUG) throw new Error('Le shadow WordPress est limité au site principal');
+  wordpressTarget(draft);
   if (!['news', 'guide'].includes(draft.contentType)) return null;
   const bannerPath = String(draft.banner?.path || '').trim();
   if (!bannerPath) throw new Error('La bannière locale du brouillon est introuvable');
@@ -294,11 +306,37 @@ export function assetForWordPressDraft(draft, { includeBytes = true } = {}) {
   return asset;
 }
 
-function endpointOrigin(value) {
+export function endpointOrigin(value) {
   const url = new URL(String(value || ''));
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('URL WordPress HTTPS invalide');
-  url.pathname = '/';
+  url.pathname = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
   return url.href;
+}
+
+export function enabledWordPressMediaSlugs(env = process.env) {
+  const raw = String(env.WORDPRESS_DRAFT_MEDIA_SLUGS || 'chaimbault');
+  const slugs = [...new Set(raw.split(',').map((value) => value.trim()).filter(Boolean))];
+  if (!slugs.length || slugs.some((slug) => !WORDPRESS_TARGETS[slug])) {
+    throw new Error('WORDPRESS_DRAFT_MEDIA_SLUGS contient un média non pris en charge');
+  }
+  return slugs;
+}
+
+export function wordpressSiteUrls(env = process.env) {
+  const baseUrl = endpointOrigin(env.WORDPRESS_DRAFT_BASE_URL);
+  let overrides = {};
+  if (env.WORDPRESS_DRAFT_SITE_URLS_JSON) {
+    try { overrides = JSON.parse(env.WORDPRESS_DRAFT_SITE_URLS_JSON); } catch { throw new Error('WORDPRESS_DRAFT_SITE_URLS_JSON doit être un objet JSON valide'); }
+    if (!overrides || Array.isArray(overrides) || typeof overrides !== 'object') throw new Error('WORDPRESS_DRAFT_SITE_URLS_JSON doit être un objet JSON valide');
+    for (const [slug, url] of Object.entries(overrides)) {
+      if (!WORDPRESS_TARGETS[slug]) throw new Error(`URL WordPress fournie pour un média inconnu: ${slug}`);
+      overrides[slug] = endpointOrigin(url);
+    }
+  }
+  return Object.fromEntries(Object.entries(WORDPRESS_TARGETS).map(([slug, target]) => [
+    slug,
+    overrides[slug] || new URL(target.stagingPath.replace(/^\//u, ''), baseUrl).href,
+  ]));
 }
 
 export class WordPressDraftClient {
@@ -354,9 +392,11 @@ export class WordPressDraftPublisher {
     this.client = client;
   }
 
-  clientForWrite() {
-    return this.client || new WordPressDraftClient({
-      baseUrl: this.env.WORDPRESS_DRAFT_BASE_URL,
+  clientForWrite(draft) {
+    if (this.client) return this.client;
+    const urls = wordpressSiteUrls(this.env);
+    return new WordPressDraftClient({
+      baseUrl: urls[draft.mediaSlug],
       username: this.env.WORDPRESS_DRAFT_USERNAME,
       applicationPassword: this.env.WORDPRESS_DRAFT_APPLICATION_PASSWORD,
     });
@@ -378,10 +418,11 @@ export class WordPressDraftPublisher {
         payload: payloadForWordPressDraft(draft, { featuredMediaId }),
       };
     }
-    const client = this.clientForWrite();
+    const target = wordpressTarget(draft);
+    const client = this.clientForWrite(draft);
     const health = await client.health();
-    if (health.body?.status !== 'ok' || health.body?.site_key !== 'principal' || health.body?.publication_mode !== 'draft-only') {
-      throw new Error('Le endpoint WordPress principal n’est pas en mode brouillon sûr');
+    if (health.body?.status !== 'ok' || health.body?.site_key !== target.siteKey || health.body?.publication_mode !== 'draft-only') {
+      throw new Error(`Le endpoint WordPress ${target.siteKey} n’est pas en mode brouillon sûr`);
     }
     let assetReceipt = null;
     if (!featuredMediaId && assetManifest) {
@@ -403,6 +444,7 @@ export class WordPressDraftPublisher {
       status: 'draft-mirrored',
       mirroredAt: this.now().toISOString(),
       mediaSlug: draft.mediaSlug,
+      siteKey: target.siteKey,
       contentType: draft.contentType,
       candidateId: draft.candidateId,
       draftPath: absoluteDraftPath,
@@ -418,7 +460,7 @@ export class WordPressDraftPublisher {
   async run({ dryRun = false, limit = 1 } = {}) {
     const results = [];
     const skipped = [];
-    const draftPaths = this.store.listDraftPaths(PRINCIPAL_MEDIA_SLUG);
+    const draftPaths = enabledWordPressMediaSlugs(this.env).flatMap((slug) => this.store.listDraftPaths(slug));
     for (const path of draftPaths) {
       if (results.length >= limit) break;
       const draft = readJson(path, null);

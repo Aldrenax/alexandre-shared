@@ -1,5 +1,5 @@
 [Unit]
-Description=Hermes Media Engine - brouillons du site principal vers WordPress
+Description=Hermes Media Engine - brouillons du réseau autorisé vers WordPress
 After=network-online.target
 Wants=network-online.target
 
@@ -28,4 +28,3 @@ RestrictSUIDSGID=true
 LockPersonality=true
 ReadOnlyPaths=/opt/alexandre-media-engine/current /var/lib/hermes-agent/business-data
 ReadWritePaths=/var/lib/alexandre-media-engine /var/lib/hermes-agent/media-engine
-

@@ -42,6 +42,41 @@ Daily et AskOptimize restent dans le registre et dans Telegram, mais
 10. Un déploiement, une activation de publication ou un push exige une autorisation séparée.
 11. Tous les messages opérationnels passent par `hermes send`. L'API Telegram directe reste réservée au provisionnement des topics.
 
+## Relais WordPress du réseau
+
+Le worker `wordpress-shadow` sait préparer des brouillons pour les six médias,
+mais reste principal-only par défaut. L'activation d'un média thématique exige
+trois preuves cumulatives :
+
+1. le compte technique Hermes est membre du blog WordPress attendu avec le seul
+   rôle `alexandre_hermes_draft` ;
+2. l'endpoint de ce blog répond avec son `site_key` exact et
+   `publication_mode=draft-only` ;
+3. le slug du média est ajouté explicitement à
+   `WORDPRESS_DRAFT_MEDIA_SLUGS`.
+
+La matrice est fixe : `tesla-tech -> tesla`, puis Affiliation, Logiciels,
+Entreprise et Investissement gardent leur slug. Les Actualités thématiques sont
+créées en type `actualite` et sous `/actualites/`; le principal conserve
+`article` sous `/blog/`. Les Vidéos et Guides restent sous `/videos/` et
+`/guides/` sur tous les sites.
+
+Avant le mapping d'un domaine, le worker peut utiliser le chemin technique du
+Multisite sous `alexandrechaimbault.com`. Après le mapping et la bascule DNS,
+`WORDPRESS_DRAFT_SITE_URLS_JSON` doit fixer l'URL finale du média. Exemple de
+syntaxe dans le fichier systemd protégé :
+
+```text
+WORDPRESS_DRAFT_MEDIA_SLUGS=chaimbault,affiliation
+WORDPRESS_DRAFT_SITE_URLS_JSON='{"affiliation":"https://alexandre-affiliation.fr/"}'
+```
+
+Ce relais ne publie rien : il crée ou rejoue uniquement des brouillons
+idempotents, refuse une identité de blog inattendue et ne reçoit aucun droit
+WordPress natif de publication, suppression ou upload. Le publisher Git/Astro
+reste le rollback tant que la bascule éditoriale propre au domaine n'est pas
+autorisée.
+
 ## Pipeline d'actualité
 
 1. Collecte conditionnelle des RSS, API et pages officielles.

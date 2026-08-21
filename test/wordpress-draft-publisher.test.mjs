@@ -7,9 +7,13 @@ import { MediaStateStore } from '../media/state-store.mjs';
 import {
   markdownBlocks,
   assetForWordPressDraft,
+  enabledWordPressMediaSlugs,
+  endpointOrigin,
   payloadForWordPressDraft,
   renderWordPressContent,
   withVerifiedSourceDate,
+  wordpressSiteUrls,
+  wordpressTarget,
   WordPressDraftClient,
   WordPressDraftPublisher,
 } from '../media/wordpress-draft-publisher.mjs';
@@ -88,6 +92,39 @@ test('le payload principal est brouillon, idempotent et conserve le contrat SEO'
   assert.throws(() => payloadForWordPressDraft(draft({ sourcePublishedAt: null })), /date de publication/);
 });
 
+test('les cinq médias thématiques ciblent leur blog, type Actualité et domaine WordPress exacts', () => {
+  const cases = [
+    ['affiliation', 'affiliation', 'alexandre-affiliation.fr'],
+    ['logiciels', 'logiciels', 'alexandre-logiciels.fr'],
+    ['entreprise', 'entreprise', 'alexandre-entreprise.fr'],
+    ['tesla-tech', 'tesla', 'alexandre-tesla.fr'],
+    ['investissement', 'investissement', 'alexandre-investissement.fr'],
+  ];
+  for (const [mediaSlug, siteKey, domain] of cases) {
+    const payload = payloadForWordPressDraft(draft({ mediaSlug }));
+    assert.equal(wordpressTarget({ mediaSlug }).siteKey, siteKey);
+    assert.equal(payload.content_type, 'actualite');
+    assert.equal(payload.site_key, siteKey);
+    assert.equal(payload.public_path, '/actualites/une-annonce-verifiee/');
+    assert.equal(payload.canonical_url, `https://${domain}/actualites/une-annonce-verifiee/`);
+  }
+});
+
+test('les endpoints WordPress conservent les chemins Multisite et acceptent des overrides finaux explicites', () => {
+  assert.equal(endpointOrigin('https://example.test/affiliation'), 'https://example.test/affiliation/');
+  const env = {
+    WORDPRESS_DRAFT_BASE_URL: 'https://alexandrechaimbault.com/',
+    WORDPRESS_DRAFT_SITE_URLS_JSON: JSON.stringify({ affiliation: 'https://alexandre-affiliation.fr/' }),
+  };
+  const urls = wordpressSiteUrls(env);
+  assert.equal(urls.chaimbault, 'https://alexandrechaimbault.com/');
+  assert.equal(urls.logiciels, 'https://alexandrechaimbault.com/logiciels/');
+  assert.equal(urls.affiliation, 'https://alexandre-affiliation.fr/');
+  assert.deepEqual(enabledWordPressMediaSlugs({}), ['chaimbault']);
+  assert.deepEqual(enabledWordPressMediaSlugs({ WORDPRESS_DRAFT_MEDIA_SLUGS: 'chaimbault,affiliation,affiliation' }), ['chaimbault', 'affiliation']);
+  assert.throws(() => enabledWordPressMediaSlugs({ WORDPRESS_DRAFT_MEDIA_SLUGS: 'inconnu' }), /non pris en charge/u);
+});
+
 test('la bannière locale devient un asset borné et vérifié par SHA-256', () => {
   const root = mkdtempSync(join(tmpdir(), 'wordpress-asset-'));
   const bannerPath = join(root, 'banner.webp');
@@ -161,6 +198,42 @@ test('le client et le publisher prouvent le mode draft-only sans exposer le mot 
   assert.equal(JSON.parse(requests[2].options.body).featured_media, 321);
   assert.doesNotMatch(JSON.stringify(receipt), /secret-application-password/u);
   assert.equal(JSON.parse(readFileSync(receipt.receiptPath, 'utf8')).wordpress.post_status, 'draft');
+});
+
+test('un média thématique est refusé si le endpoint répond avec l’identité d’un autre blog', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-shadow-wrong-site-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const draftPath = store.saveDraft('affiliation', draft({
+    mediaSlug: 'affiliation',
+    contentType: 'video',
+    video: { videoId: 'abcdefghijk', url: 'https://www.youtube.com/watch?v=abcdefghijk' },
+  }));
+  const client = {
+    health: async () => ({ body: { status: 'ok', site_key: 'principal', publication_mode: 'draft-only' } }),
+  };
+  const publisher = new WordPressDraftPublisher({ store, client });
+  await assert.rejects(() => publisher.mirrorDraftPath(draftPath), /affiliation.*brouillon sûr/u);
+});
+
+test('le run scanne uniquement les médias WordPress explicitement autorisés', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-shadow-network-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const video = { videoId: 'abcdefghijk', url: 'https://www.youtube.com/watch?v=abcdefghijk' };
+  store.saveDraft('chaimbault', draft({ candidateId: 'principal-one', contentType: 'video', video }));
+  store.saveDraft('affiliation', draft({ mediaSlug: 'affiliation', candidateId: 'affiliate-one', contentType: 'video', video }));
+  store.saveDraft('logiciels', draft({ mediaSlug: 'logiciels', candidateId: 'logiciels-one', contentType: 'video', video }));
+  const publisher = new WordPressDraftPublisher({
+    store,
+    env: {
+      WORDPRESS_DRAFT_MEDIA_SLUGS: 'chaimbault,affiliation',
+      WORDPRESS_DRAFT_BASE_URL: 'https://example.test/',
+    },
+  });
+  const result = await publisher.run({ dryRun: true, limit: 10 });
+  assert.equal(result.inspected, 2);
+  assert.deepEqual(result.results.map((row) => row.payload.site_key).sort(), ['affiliation', 'principal']);
 });
 
 test('un ancien brouillon incompatible est isolé sans bloquer le suivant', async () => {

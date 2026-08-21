@@ -1083,12 +1083,13 @@ test('publication VPS: npm utilise le cache runtime autorisé par systemd', () =
   assert.match(unit, /^ReadWritePaths=.*\/var\/lib\/alexandre-media-engine(?:\s|$)/m);
 });
 
-test('WordPress principal: le timer charge le secret dédié et reste limité aux brouillons', () => {
+test('WordPress réseau: le timer charge le secret dédié et reste limité aux brouillons autorisés', () => {
   const service = readFileSync(new URL('../deploy/systemd/alexandre-wordpress-draft.service', import.meta.url), 'utf8');
   const timer = readFileSync(new URL('../deploy/systemd/alexandre-wordpress-draft.timer', import.meta.url), 'utf8');
   assert.match(service, /^EnvironmentFile=\/etc\/alexandre-media-engine\/wordpress-shadow\.env$/m);
   assert.match(service, /media-engine\.mjs wordpress-shadow --limit 3 --json/);
   assert.match(service, /^NoNewPrivileges=true$/m);
+  assert.match(service, /brouillons du réseau autorisé vers WordPress/);
   assert.match(timer, /^OnCalendar=\*-\*-\* \*:0\/10$/m);
 });
 
