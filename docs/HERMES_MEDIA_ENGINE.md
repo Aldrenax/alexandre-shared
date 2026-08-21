@@ -266,12 +266,21 @@ démarrage, anciens timers inactifs et désactivés. Les services lisent ce fich
 à chaque exécution ; aucune copie de `media-engine.env` ou d'un credential ne
 doit entrer dans Git.
 
+L'ajout progressif d'un site au relais de brouillons utilise
+`bin/activate-wordpress-draft-site.mjs`. Sans `--apply`, la commande vérifie
+l'ordre du canari, l'URL finale, le blog ID, l'identité `site_key`, le mode
+`draft-only` et l'absence de droits de publication/suppression, puis quitte sans
+modifier le fichier. Avec l'autorisation explicite et `--apply`, elle sauvegarde
+`wordpress-shadow.env`, remplace atomiquement uniquement les listes de slugs et
+d'URL, puis répète la preuve de santé. Elle n'active ni ne démarre aucun timer.
+
 ## Commandes de validation
 
 ```bash
 npm test
 npm audit --audit-level=high
 node bin/media-engine.mjs validate --json
+node bin/media-engine.mjs wordpress-health --media affiliation --json
 node bin/media-engine.mjs run --dry-run --json
 node bin/media-engine.mjs video --media logiciels --dry-run --json
 node bin/media-engine.mjs guide --media entreprise --dry-run --json

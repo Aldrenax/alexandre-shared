@@ -349,7 +349,9 @@ export class WordPressDraftClient {
   }
 
   async request(path, options = {}) {
-    const response = await this.fetchImpl(new URL(path, this.baseUrl), {
+	const relativePath = String(path || '').replace(/^\/+/, '');
+	if (!relativePath) throw new Error('Chemin WordPress vide');
+	const response = await this.fetchImpl(new URL(relativePath, this.baseUrl), {
       redirect: 'error',
       signal: AbortSignal.timeout(this.timeoutMs),
       ...options,
@@ -393,13 +395,41 @@ export class WordPressDraftPublisher {
   }
 
   clientForWrite(draft) {
+	return this.clientForMedia(draft.mediaSlug);
+  }
+
+  clientForMedia(mediaSlug) {
     if (this.client) return this.client;
     const urls = wordpressSiteUrls(this.env);
     return new WordPressDraftClient({
-      baseUrl: urls[draft.mediaSlug],
+	  baseUrl: urls[mediaSlug],
       username: this.env.WORDPRESS_DRAFT_USERNAME,
       applicationPassword: this.env.WORDPRESS_DRAFT_APPLICATION_PASSWORD,
     });
+  }
+
+  async healthForMedia(mediaSlug) {
+	const target = WORDPRESS_TARGETS[mediaSlug];
+	if (!target) throw new Error(`Média WordPress non pris en charge: ${mediaSlug || '(vide)'}`);
+	const response = await this.clientForMedia(mediaSlug).health();
+	const health = response.body || {};
+	if (
+	  health.status !== 'ok'
+	  || health.site_key !== target.siteKey
+	  || health.publication_mode !== 'draft-only'
+	  || health.can_publish !== false
+	  || health.can_delete !== false
+	) {
+	  throw new Error(`Le endpoint WordPress ${target.siteKey} n’est pas en mode brouillon sûr`);
+	}
+	return {
+	  status: health.status,
+	  siteKey: health.site_key,
+	  blogId: Number(health.blog_id || 0),
+	  publicationMode: health.publication_mode,
+	  canPublish: health.can_publish,
+	  canDelete: health.can_delete,
+	};
   }
 
   async mirrorDraftPath(draftPath, { dryRun = false, featuredMediaId = 0 } = {}) {
@@ -418,12 +448,9 @@ export class WordPressDraftPublisher {
         payload: payloadForWordPressDraft(draft, { featuredMediaId }),
       };
     }
-    const target = wordpressTarget(draft);
-    const client = this.clientForWrite(draft);
-    const health = await client.health();
-    if (health.body?.status !== 'ok' || health.body?.site_key !== target.siteKey || health.body?.publication_mode !== 'draft-only') {
-      throw new Error(`Le endpoint WordPress ${target.siteKey} n’est pas en mode brouillon sûr`);
-    }
+	const target = wordpressTarget(draft);
+	const client = this.clientForWrite(draft);
+	await this.healthForMedia(draft.mediaSlug);
     let assetReceipt = null;
     if (!featuredMediaId && assetManifest) {
       const assetResponse = await client.uploadAsset(assetForWordPressDraft(draft));

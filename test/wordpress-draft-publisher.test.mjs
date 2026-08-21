@@ -167,7 +167,7 @@ test('le client et le publisher prouvent le mode draft-only sans exposer le mot 
     const isHealth = target.endsWith('/health');
     const isAsset = target.endsWith('/assets');
     return new Response(JSON.stringify(isHealth
-      ? { status: 'ok', site_key: 'principal', publication_mode: 'draft-only' }
+      ? { status: 'ok', site_key: 'principal', blog_id: 1, publication_mode: 'draft-only', can_publish: false, can_delete: false }
       : isAsset
         ? { status: 'asset-ready', result: 'created', attachment_id: 321, publication_mode: 'draft-only' }
         : { result: 'created', post_id: 432, post_status: 'draft', publication_mode: 'draft-only' }), {
@@ -198,6 +198,48 @@ test('le client et le publisher prouvent le mode draft-only sans exposer le mot 
   assert.equal(JSON.parse(requests[2].options.body).featured_media, 321);
   assert.doesNotMatch(JSON.stringify(receipt), /secret-application-password/u);
   assert.equal(JSON.parse(readFileSync(receipt.receiptPath, 'utf8')).wordpress.post_status, 'draft');
+});
+
+test('le client conserve le sous-chemin du blog Multisite pour chaque endpoint', async () => {
+  const requests = [];
+  const client = new WordPressDraftClient({
+    baseUrl: 'https://example.test/affiliation/',
+    username: 'hermes',
+    applicationPassword: 'application-password',
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+      return new Response(JSON.stringify({
+        status: 'ok',
+        site_key: 'affiliation',
+        blog_id: 5,
+        publication_mode: 'draft-only',
+        can_publish: false,
+        can_delete: false,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  await client.health();
+  assert.deepEqual(requests, ['https://example.test/affiliation/wp-json/alexandre-network/v1/health']);
+});
+
+test('la santé WordPress refuse tout droit natif de publication ou suppression', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-health-capabilities-'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const client = {
+    health: async () => ({
+      body: {
+        status: 'ok',
+        site_key: 'affiliation',
+        blog_id: 5,
+        publication_mode: 'draft-only',
+        can_publish: true,
+        can_delete: false,
+      },
+    }),
+  };
+  const publisher = new WordPressDraftPublisher({ store, client });
+  await assert.rejects(() => publisher.healthForMedia('affiliation'), /affiliation.*brouillon sûr/u);
 });
 
 test('un média thématique est refusé si le endpoint répond avec l’identité d’un autre blog', async () => {

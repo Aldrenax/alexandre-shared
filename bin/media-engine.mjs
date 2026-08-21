@@ -39,6 +39,13 @@ function offersFromPayload(payload) {
 }
 
 const command = process.argv[2] || 'validate';
+if (command === 'wordpress-health' || command === 'wordpress-shadow') {
+  loadEnvironmentFile(
+    process.env.MEDIA_ENGINE_WORDPRESS_ENV_FILE || '/etc/alexandre-media-engine/wordpress-shadow.env',
+    process.env,
+    { override: true },
+  );
+}
 const dryRun = process.argv.includes('--dry-run');
 const apply = process.argv.includes('--apply');
 const mediaSlug = argument('--media');
@@ -109,11 +116,15 @@ try {
       ? await publisher.mirrorDraftPath(draftPath, { dryRun })
       : await publisher.run({ dryRun, limit: Number(argument('--limit', '1')) });
     output(result);
+  } else if (command === 'wordpress-health') {
+    const publisher = new WordPressDraftPublisher({ store: engine.store });
+    result = await publisher.healthForMedia(mediaSlug);
+    output(result);
   } else if (command === 'run') {
     result = await engine.runCycle({ mediaSlug, dryRun });
     output(result);
   } else {
-    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-shadow|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
+    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-health|wordpress-shadow|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
     process.exitCode = 2;
   }
   if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'wordpress-shadow', 'run'].includes(command)) {
