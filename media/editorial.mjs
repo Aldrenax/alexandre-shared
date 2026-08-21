@@ -303,6 +303,10 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
   }
   const wordCount = body.split(/\s+/).filter(Boolean).length;
   const generatedAt = new Date();
+  const sourcePublishedAt = [
+    candidate.publishedAt,
+    ...(candidate.sources || []).map((source) => source?.publishedAt),
+  ].find((value) => Number.isFinite(Date.parse(value || ''))) || null;
   return {
     ...payload,
     status: 'draft',
@@ -317,6 +321,7 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
     wordCount,
     sourceUrls,
     sourceItemIds,
+    sourcePublishedAt,
     offer: candidate.offer || null,
     claims: Array.isArray(payload?.claims) ? payload.claims : [],
     generatedAt: generatedAt.toISOString(),

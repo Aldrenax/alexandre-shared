@@ -815,6 +815,7 @@ test('état éditorial: un échec QA est retenté une fois après révision du p
 
 test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
   const media = mediaBySlug('logiciels');
+  const sourcePublishedAt = '2026-08-14T08:00:00.000Z';
   const candidate = {
     id: 'candidate-1',
     mediaSlug: 'logiciels',
@@ -824,7 +825,7 @@ test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
     corroborated: true,
     rumor: false,
     keywordMatches: ['logiciel'],
-    sources: [{ sourceId: 'github', tier: 0, official: true, title: 'GitHub annonce', url: 'https://github.blog/changelog/item', excerpt: 'Annonce officielle', publishedAt: new Date().toISOString() }],
+    sources: [{ sourceId: 'github', tier: 0, official: true, title: 'GitHub annonce', url: 'https://github.blog/changelog/item', excerpt: 'Annonce officielle', publishedAt: sourcePublishedAt }],
     offer: null,
   };
   const prompt = buildEditorialPrompt({ media, candidate, contentType: 'news' });
@@ -848,6 +849,7 @@ test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
     bannerBrief: { alt: 'Interface GitHub illustrant une évolution logicielle' },
   };
   let draft = normalizeDraft(payload, { contentType: 'news', candidate, media });
+  assert.equal(draft.sourcePublishedAt, sourcePublishedAt);
   const banner = join(mkdtempSync(join(tmpdir(), 'media-banner-')), 'banner.webp');
   writeFileSync(banner, Buffer.alloc(9_000));
   draft = { ...draft, banner: { path: banner, alt: 'Bannière GitHub', width: 1_200, height: 630 } };

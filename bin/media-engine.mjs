@@ -8,6 +8,7 @@ import { loadSiteConfigs, PublicationWorker } from '../media/publication-worker.
 import { runPreflight } from '../media/preflight.mjs';
 import { registrySnapshot, validateRegistry } from '../media/registry.mjs';
 import { classifyRunOutcome } from '../media/run-outcome.mjs';
+import { WordPressDraftPublisher } from '../media/wordpress-draft-publisher.mjs';
 
 // Les commandes opérateur et les heartbeats appellent aussi le CLI hors
 // systemd. Charger les mêmes fichiers garantit un préflight fidèle, notamment
@@ -101,14 +102,21 @@ try {
       ? await worker.publishDraftPath(draftPath, { dryRun })
       : await worker.run({ mediaSlug, dryRun, limit: Number(argument('--limit', '1')) });
     output(result);
+  } else if (command === 'wordpress-shadow') {
+    const publisher = new WordPressDraftPublisher({ store: engine.store });
+    const draftPath = argument('--draft');
+    result = draftPath
+      ? await publisher.mirrorDraftPath(draftPath, { dryRun })
+      : await publisher.run({ dryRun, limit: Number(argument('--limit', '1')) });
+    output(result);
   } else if (command === 'run') {
     result = await engine.runCycle({ mediaSlug, dryRun });
     output(result);
   } else {
-    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
+    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-shadow|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
     process.exitCode = 2;
   }
-  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'run'].includes(command)) {
+  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'wordpress-shadow', 'run'].includes(command)) {
     engine.store.initialize();
     const outcome = classifyRunOutcome(command, result, { mediaSlug: mediaSlug || null });
     engine.store.recordRun(command, outcome.receipt);

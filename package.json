@@ -29,6 +29,7 @@
     "./media/telegram.mjs": "./media/telegram.mjs",
     "./media/site-publisher.mjs": "./media/site-publisher.mjs",
     "./media/publication-worker.mjs": "./media/publication-worker.mjs",
+    "./media/wordpress-draft-publisher.mjs": "./media/wordpress-draft-publisher.mjs",
     "./media/preflight.mjs": "./media/preflight.mjs",
     "./media/newsletter-attribution.mjs": "./media/newsletter-attribution.mjs",
     "./media/engine.mjs": "./media/engine.mjs"
