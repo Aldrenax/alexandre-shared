@@ -140,3 +140,29 @@ test('le client et le publisher prouvent le mode draft-only sans exposer le mot 
   assert.doesNotMatch(JSON.stringify(receipt), /secret-application-password/u);
   assert.equal(JSON.parse(readFileSync(receipt.receiptPath, 'utf8')).wordpress.post_status, 'draft');
 });
+
+test('un ancien brouillon incompatible est isolé sans bloquer le suivant', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-shadow-queue-'));
+  const bannerPath = join(root, 'old-news.webp');
+  writeFileSync(bannerPath, Buffer.from('fixture-image-bytes'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  store.saveDraft('chaimbault', draft({
+    candidateId: 'old-news',
+    sourcePublishedAt: null,
+    banner: { path: bannerPath, alt: 'Ancienne bannière' },
+  }));
+  store.saveDraft('chaimbault', draft({
+    candidateId: 'valid-video',
+    contentType: 'video',
+    slug: 'valid-video',
+    video: { videoId: 'abcdefghijk', url: 'https://www.youtube.com/watch?v=abcdefghijk' },
+  }));
+  const publisher = new WordPressDraftPublisher({ store });
+  const result = await publisher.run({ dryRun: true, limit: 1 });
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].payload.content_type, 'video');
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped[0].candidateId, 'old-news');
+  assert.match(result.skipped[0].reason, /date de publication/u);
+});

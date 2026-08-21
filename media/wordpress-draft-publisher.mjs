@@ -400,13 +400,24 @@ export class WordPressDraftPublisher {
 
   async run({ dryRun = false, limit = 1 } = {}) {
     const results = [];
-    for (const path of this.store.listDraftPaths(PRINCIPAL_MEDIA_SLUG)) {
+    const skipped = [];
+    const draftPaths = this.store.listDraftPaths(PRINCIPAL_MEDIA_SLUG);
+    for (const path of draftPaths) {
       if (results.length >= limit) break;
       const draft = readJson(path, null);
       if (!draft?.qa?.passed || draft.publicationEligibility?.status !== 'eligible') continue;
       if (this.store.hasEvent(`wordpress-draft:${draft.mediaSlug}:${draft.contentType}:${draft.candidateId}`)) continue;
-      results.push(await this.mirrorDraftPath(path, { dryRun }));
+      try {
+        results.push(await this.mirrorDraftPath(path, { dryRun }));
+      } catch (error) {
+        skipped.push({
+          draftPath: path,
+          candidateId: String(draft.candidateId || ''),
+          contentType: String(draft.contentType || ''),
+          reason: String(error?.message || error).slice(0, 500),
+        });
+      }
     }
-    return { inspected: this.store.listDraftPaths(PRINCIPAL_MEDIA_SLUG).length, results };
+    return { inspected: draftPaths.length, results, skipped };
   }
 }
