@@ -248,6 +248,10 @@ Le code est installé par `deploy/install-media-engine.sh --apply` dans une
 release immuable sous `/opt/alexandre-media-engine/releases/<id>`, puis le lien
 `/opt/alexandre-media-engine/current` est basculé atomiquement vers celle-ci.
 Il ne faut jamais modifier directement le contenu pointé par `current`.
+L'installation conserve toutes les releases précédentes par défaut. Le nettoyage
+des releases au-delà des six plus récentes exige l'option destructive séparée
+`--prune-stale` et une autorisation explicite propre à cette suppression ; cette
+option n'est jamais utilisée pendant une bascule de site.
 
 `deploy/activate-publication.sh` migre `publication.env` sans recopier ni
 afficher de secret : il conserve la date de cutover existante, crée un fichier
