@@ -378,6 +378,12 @@ export class WordPressDraftClient {
     return this.request('/wp-json/alexandre-network/v1/drafts', { method: 'POST', body: JSON.stringify(payload) });
   }
 
+  updateDraft(postId, payload) {
+    const id = Number(postId);
+    if (!Number.isInteger(id) || id < 1) throw new Error('Identifiant de publication WordPress invalide');
+    return this.request(`/wp-json/alexandre-network/v1/drafts/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
   uploadAsset(payload) {
     const { byte_length: byteLength, ...body } = payload;
     if (byteLength !== Buffer.byteLength(body.bytes_base64 || '', 'base64')) throw new Error('La taille de l’asset WordPress a changé avant envoi');
@@ -470,7 +476,24 @@ export class WordPressDraftPublisher {
 	const target = wordpressTarget(draft);
 	const client = this.clientForWrite(draft);
 	await this.healthForAutomaticPublication(draft.mediaSlug);
-	const response = await client.createDraft(payload);
+	let response;
+	try {
+	  response = await client.createDraft(payload);
+	} catch (error) {
+	  // Les brouillons créés pendant la préproduction ont le même candidate_id.
+	  // La reprise met à jour uniquement leur contenu mutable puis les publie,
+	  // sans créer un second article ni toucher aux champs immuables.
+	  if (!String(error?.message || '').startsWith('WordPress HTTP 409: alexandre_network_candidate_payload_conflict')) throw error;
+	  const mirroredPath = join(this.store.stateDir, 'wordpress-draft-receipts', draft.mediaSlug, `${draft.slug}.json`);
+	  const mirrored = readJson(mirroredPath, null);
+	  const expectedCandidateId = `media-engine:${draft.mediaSlug}:${draft.contentType}:${draft.candidateId}`;
+	  const postId = Number(mirrored?.wordpress?.post_id || 0);
+	  if (mirrored?.wordpress?.candidate_id !== expectedCandidateId || !Number.isInteger(postId) || postId < 1) {
+	    throw new Error('Conflit WordPress sans brouillon de préproduction correspondant');
+	  }
+	  const { candidate_id, content_type, featured_media, ...mutablePayload } = payload;
+	  response = await client.updateDraft(postId, mutablePayload);
+	}
 	if (
 	  response.body?.post_status !== 'publish'
 	  || response.body?.publication_mode !== 'auto-publish'
