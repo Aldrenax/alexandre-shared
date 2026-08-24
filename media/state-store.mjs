@@ -18,6 +18,9 @@ const QUEUE_KINDS = new Set([
   'events',
   'caption-requests',
   'newsletter-attribution',
+  'publication-ready',
+  'publication-verification',
+  'publication-failed',
 ]);
 
 function ensureDir(path) {
@@ -130,6 +133,34 @@ export class MediaStateStore {
     const path = this.queuePath(kind, id);
     writeJsonAtomic(path, payload);
     return path;
+  }
+
+  removeQueueEntry(kind, id) {
+    const path = this.queuePath(kind, id);
+    if (existsSync(path)) rmSync(path, { force: true });
+    return path;
+  }
+
+  enqueuePublicationReady(draftPath, draft, { now = new Date() } = {}) {
+    if (!draft?.qa?.passed || draft?.publicationEligibility?.status !== 'eligible') return null;
+    const queueId = `${draft.mediaSlug}-${draft.contentType}-${draft.slug}`;
+    const path = this.queuePath('publication-ready', queueId);
+    const existing = readJson(path, null);
+    return this.enqueue('publication-ready', queueId, {
+      version: 1,
+      queueId,
+      mediaSlug: draft.mediaSlug,
+      contentType: draft.contentType,
+      candidateId: draft.candidateId,
+      slug: draft.slug,
+      title: draft.title,
+      draftPath,
+      scheduledPublishAt: draft.scheduledPublishAt || null,
+      qualificationProfile: draft.candidateQualification?.profile || 'strict',
+      queuedAt: existing?.queuedAt || now.toISOString(),
+      attempts: Number(existing?.attempts || 0),
+      nextAttemptAt: existing?.nextAttemptAt || null,
+    });
   }
 
   listQueueEntries(kind) {

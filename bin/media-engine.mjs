@@ -40,7 +40,7 @@ function offersFromPayload(payload) {
 }
 
 const command = process.argv[2] || 'validate';
-if (command === 'wordpress-health' || command === 'wordpress-shadow' || command === 'wordpress-publish') {
+if (command === 'wordpress-health' || command === 'wordpress-shadow' || command === 'wordpress-publish' || command === 'publication-queue-sync' || command === 'publication-status') {
   loadEnvironmentFile(
     process.env.MEDIA_ENGINE_WORDPRESS_ENV_FILE || '/etc/alexandre-media-engine/wordpress-shadow.env',
     process.env,
@@ -124,6 +124,16 @@ try {
       ? await worker.publishDraftPath(draftPath, { dryRun })
       : await worker.run({ mediaSlug, dryRun, limit: Number(argument('--limit', '1')) });
     output(result);
+  } else if (command === 'publication-queue-sync') {
+    const worker = new WordPressPublicationWorker({ store: engine.store });
+    if (!dryRun) engine.store.initialize();
+    const queued = worker.syncReadyQueue({ mediaSlug, since: argument('--since') });
+    result = { queued: queued.length, status: worker.publicationStatus() };
+    output(result);
+  } else if (command === 'publication-status') {
+    const worker = new WordPressPublicationWorker({ store: engine.store });
+    result = worker.publicationStatus();
+    output(result);
   } else if (command === 'wordpress-health') {
     const publisher = new WordPressDraftPublisher({ store: engine.store });
     result = await publisher.healthForMedia(mediaSlug);
@@ -132,7 +142,7 @@ try {
     result = await engine.runCycle({ mediaSlug, dryRun });
     output(result);
   } else {
-    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-health|wordpress-shadow|wordpress-publish|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
+    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-health|wordpress-shadow|wordpress-publish|publication-queue-sync|publication-status|health|monitor|run> [--media slug] [--draft path] [--limit n] [--since ISO] [--dry-run] [--apply] [--json]');
     process.exitCode = 2;
   }
   if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'wordpress-shadow', 'wordpress-publish', 'run'].includes(command)) {

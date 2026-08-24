@@ -1,8 +1,9 @@
 # Hermes Media Engine
 
-Statut au 14 août 2026 : moteur déployé sur `chaimbault` après sept jours de
-shadow, publication automatique approuvée et push Git actif. Les limites de
-cadence et les contrôles qualité décrits ci-dessous restent obligatoires.
+Statut au 24 août 2026 : le moteur publie directement dans le réseau WordPress
+des six sites. Git et Astro ne participent plus à la publication éditoriale.
+Les limites de cadence et les contrôles qualité décrits ci-dessous restent
+obligatoires.
 
 ## Périmètre
 
@@ -44,16 +45,15 @@ Daily et AskOptimize restent dans le registre et dans Telegram, mais
 
 ## Relais WordPress du réseau
 
-Le worker `wordpress-shadow` sait préparer des brouillons pour les six médias,
-mais reste principal-only par défaut. L'activation d'un média thématique exige
-trois preuves cumulatives :
+Le worker WordPress cible directement les six médias. Il crée le contenu,
+contrôle sa disponibilité publique puis conserve un reçu par publication. La
+configuration du réseau exige trois preuves cumulatives :
 
 1. le compte technique Hermes est membre du blog WordPress attendu avec le seul
    rôle `alexandre_hermes_draft` ;
 2. l'endpoint de ce blog répond avec son `site_key` exact et
    `publication_mode=draft-only` ;
-3. le slug du média est ajouté explicitement à
-   `WORDPRESS_DRAFT_MEDIA_SLUGS`.
+3. le slug du média est ajouté explicitement à `WORDPRESS_DRAFT_MEDIA_SLUGS`.
 
 La matrice est fixe : `tesla-tech -> tesla`, puis Affiliation, Logiciels,
 Entreprise et Investissement gardent leur slug. Les Actualités thématiques sont
@@ -71,11 +71,12 @@ WORDPRESS_DRAFT_MEDIA_SLUGS=chaimbault,affiliation
 WORDPRESS_DRAFT_SITE_URLS_JSON='{"affiliation":"https://alexandre-affiliation.fr/"}'
 ```
 
-Ce relais ne publie rien : il crée ou rejoue uniquement des brouillons
-idempotents, refuse une identité de blog inattendue et ne reçoit aucun droit
-WordPress natif de publication, suppression ou upload. Le publisher Git/Astro
-reste le rollback tant que la bascule éditoriale propre au domaine n'est pas
-autorisée.
+Le relais est idempotent, refuse une identité de blog inattendue et n'autorise
+jamais de suppression. Un contenu qualifié est ajouté à la file
+`publication-ready`, publiée par événement de fichier et reprise toutes les dix
+minutes. Les erreurs sont rejouées avec un délai croissant, puis isolées après
+cinq tentatives. Une publication WordPress non encore visible entre dans une
+file de vérification séparée, sans jamais être publiée une deuxième fois.
 
 ## Pipeline d'actualité
 
@@ -91,7 +92,9 @@ autorisée.
    les écarts sûrs (longueur, structure, mentions obligatoires). Une erreur de
    preuve, de rumeur, de source ou de bannière reste bloquante.
 10. Écriture d'un brouillon dans `/var/lib/alexandre-media-engine/drafts`.
-11. Créneau de publication recommandé : délai court en journée, report à 07:00 Europe/Paris la nuit.
+11. Ajout immédiat à `queue/publication-ready` lorsqu'il est éligible.
+12. Publication directe et vérification publique. Les contrôles de quota et de
+    fraîcheur restent appliqués.
 
 La rédaction produit au plus un brouillon d'actualité par média et par cycle.
 L'idempotence interdit une seconde génération pour le même candidat.
@@ -308,23 +311,18 @@ Le Studio peut ensuite envoyer une carte dans le topic de la chaîne et une
 décision dans `✅ Décisions à valider`. Les notifications publiques existantes
 continuent à observer le sitemap après publication.
 
-## Activation progressive
+## Déploiement direct réseau
 
-Après accord explicite, l'ordre est :
+La publication directe est active partout, sans phase progressive. À chaque
+mise à jour du moteur :
 
-1. Fusionner et pousser les deux dépôts validés.
-2. Mettre à jour `/opt/alexandre-studio` sur `chaimbault`.
-3. Installer le pont Studio avec `deploy/install-media-engine-studio.sh --apply`.
-4. Cloner la release `alexandre-shared` sur `chaimbault`, puis exécuter `deploy/install-media-engine.sh --apply`.
-5. Reconnecter Grok sur `chaimbault` et `askoptimize`, puis vérifier une vraie citation X.
-6. Lancer `node bin/media-engine.mjs preflight --json`.
-7. Activer le shadow avec `deploy/activate-shadow.sh --apply`.
-8. Observer sept jours de brouillons, sources, doublons, bannières, QA et alertes.
-9. Après une seconde autorisation explicite, exécuter `deploy/activate-publication.sh --apply AUTOMATIC_PUBLICATION_APPROVED`.
-10. Le script désactive alors les cinq anciens `*-news.timer`, active le publisher et exige que le pont Hermes/Telegram soit sain.
-
-Le mode automatique n'est donc pas seulement une variable : il dépend de
-trois gates indépendants, de sept jours shadow, du push Git et du créneau prévu.
+1. tester, pousser et installer la release sur `chaimbault` ;
+2. recharger systemd et activer le timer ainsi que le watcher
+   `alexandre-media-publish.path` ;
+3. lancer un cycle réseau ;
+4. vérifier `publication-status` et les URL publiques créées ;
+5. ne revenir en arrière qu'en cas d'échec technique prouvé, sans effacer les
+   brouillons, reçus ni preuves.
 
 ## Retour arrière
 

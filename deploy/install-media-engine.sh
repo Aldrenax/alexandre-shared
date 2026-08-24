@@ -69,7 +69,7 @@ if [[ ! -e "$CONFIG_DIR/sites.json" ]]; then
   install -m 0640 "$SOURCE_DIR/deploy/sites.example.json" "$CONFIG_DIR/sites.json"
 fi
 
-for unit in "$SOURCE_DIR"/deploy/systemd/*.{service,timer}; do
+for unit in "$SOURCE_DIR"/deploy/systemd/*.{service,timer,path}; do
   [[ -e "$unit" ]] || continue
   install -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
 done

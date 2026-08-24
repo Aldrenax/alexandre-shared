@@ -66,7 +66,7 @@ function dayKey(value, timeZone = 'Europe/Paris') {
   return `${field('year')}-${field('month')}-${field('day')}`;
 }
 
-function publicationPriority(draft, receipts, now) {
+export function publicationPriority(draft, receipts, now) {
   if (draft.contentType === 'news') {
     const today = dayKey(now);
     const firstNewsPending = !receipts.some((receipt) => receipt.mediaSlug === draft.mediaSlug

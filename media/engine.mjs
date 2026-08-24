@@ -1007,6 +1007,7 @@ export class MediaEngine {
       },
     };
     const draftPath = this.store.saveDraft(media.slug, draft);
+    const publicationQueuePath = this.store.enqueuePublicationReady(draftPath, draft);
     const editorialEvent = {
       version: 1,
       editorialRevision: EDITORIAL_REVISION,
@@ -1016,6 +1017,7 @@ export class MediaEngine {
       candidateId: candidate.id,
       contentType,
       draftPath,
+      publicationQueuePath,
       title: draft.title,
       bannerPath: draft.banner?.path || null,
       scheduledPublishAt: draft.scheduledPublishAt || null,

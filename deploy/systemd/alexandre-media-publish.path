@@ -1,0 +1,9 @@
+[Unit]
+Description=Hermes Media Engine - déclenchement sur nouveau contenu prêt
+
+[Path]
+PathChanged=/var/lib/alexandre-media-engine/queue/publication-ready
+Unit=alexandre-media-publish.service
+
+[Install]
+WantedBy=multi-user.target

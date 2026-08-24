@@ -57,3 +57,26 @@ test('files d\u2019\u00e9tat: upsertObserved conserve firstSeenAt et rafra\u00ee
     /Date d\u2019observation invalide/,
   );
 });
+
+test('files d\u2019\u00e9tat: un brouillon qualifi\u00e9 entre imm\u00e9diatement dans la file de publication', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-state-publication-')));
+  const now = new Date('2026-08-24T09:00:00.000Z');
+  const draft = {
+    mediaSlug: 'chaimbault',
+    contentType: 'news',
+    candidateId: 'candidate-42',
+    slug: 'publication-directe',
+    title: 'Publication directe',
+    qa: { passed: true },
+    publicationEligibility: { status: 'eligible' },
+    candidateQualification: { profile: 'fallback' },
+  };
+  const draftPath = store.saveDraft('chaimbault', draft);
+  const entryPath = store.enqueuePublicationReady(draftPath, draft, { now });
+  assert.ok(entryPath?.endsWith('chaimbault-news-publication-directe.json'));
+  const [entry] = store.listQueueEntries('publication-ready');
+  assert.equal(entry.payload.draftPath, draftPath);
+  assert.equal(entry.payload.qualificationProfile, 'fallback');
+  assert.equal(entry.payload.queuedAt, now.toISOString());
+  assert.equal(store.enqueuePublicationReady(draftPath, { ...draft, qa: { passed: false } }), null);
+});
