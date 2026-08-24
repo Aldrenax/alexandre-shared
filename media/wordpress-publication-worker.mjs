@@ -41,6 +41,13 @@ export class WordPressPublicationWorker extends PublicationWorker {
     return decision;
   }
 
+  async reconcileUnverified() {
+    // Les reçus Git/Astro antérieurs sont conservés comme historique, mais
+    // leurs URL ne sont plus des cibles WordPress et ne doivent pas générer
+    // d'échecs 404 à chaque cycle.
+    return { inspected: 0, results: [], skipped: 'legacy-astro-reconciliation-retired' };
+  }
+
   async publishDraftPath(draftPath, { dryRun = false, verifyLive = true } = {}) {
     const absoluteDraftPath = resolve(draftPath);
     if (!existsSync(absoluteDraftPath)) throw new Error(`Brouillon introuvable: ${absoluteDraftPath}`);
