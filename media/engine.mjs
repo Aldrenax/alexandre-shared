@@ -609,6 +609,32 @@ export function buildQualifiedCandidatePool({
   return [...deduped.values()].sort(candidateSort);
 }
 
+export function buildCadenceCandidatePool(options = {}) {
+  const strict = buildQualifiedCandidatePool(options);
+  const media = options.media || [];
+  const fallback = buildQualifiedCandidatePool({
+    ...options,
+    minimumScore: options.fallbackMinimumScore
+      ?? MEDIA_ENGINE_DEFAULTS.cadenceFallbackMinimumScore
+      ?? 60,
+    maximumAgeHours: options.fallbackMaximumAgeHours
+      ?? MEDIA_ENGINE_DEFAULTS.cadenceFallbackMaxAgeHours
+      ?? 120,
+  });
+  const selected = [];
+  for (const target of media) {
+    const strictForMedia = strict.filter((candidate) => candidate.mediaSlug === target.slug);
+    if (strictForMedia.length) {
+      selected.push(...strictForMedia.map((candidate) => ({ ...candidate, qualificationProfile: 'strict' })));
+      continue;
+    }
+    selected.push(...fallback
+      .filter((candidate) => candidate.mediaSlug === target.slug)
+      .map((candidate) => ({ ...candidate, qualificationProfile: 'cadence-fallback' })));
+  }
+  return selected.sort(candidateSort);
+}
+
 export function pendingEligibleNewsDraft(store, mediaSlug, {
   now = new Date(),
   maximumAgeHours = MEDIA_ENGINE_DEFAULTS.candidateMaxAgeHours || 72,
@@ -1480,7 +1506,7 @@ export class MediaEngine {
       ];
       const candidates = this.qualify(items, { mediaSlug });
       const selected = this.selectedMedia(mediaSlug);
-      const candidatePool = buildQualifiedCandidatePool({
+      const candidatePool = buildCadenceCandidatePool({
         currentCandidates: candidates,
         // Les flux inchangés répondent souvent 304 et ne réémettent aucun
         // item pendant le cycle. Relire aussi la file des candidats jadis

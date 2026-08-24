@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
+  buildCadenceCandidatePool,
   buildQualifiedCandidatePool,
   MediaEngine,
   normalizeEnrichedXEvidence,
@@ -104,6 +105,39 @@ test('file: les candidats frais persistés sont requalifiés, les anciens sont e
     now,
   });
   assert.deepEqual(pool.map((candidate) => candidate.id), ['fresh']);
+});
+
+test('cadence souple: un sujet corroboré récent prend le relais sans affaiblir les risques réglementés', () => {
+  const now = new Date('2026-08-14T12:00:00.000Z');
+  const publishedAt = '2026-08-11T04:00:00.000Z';
+  const candidate = {
+    id: 'fallback-corroborated',
+    mediaSlug: 'logiciels',
+    title: 'Un logiciel SaaS améliore son automatisation marketing',
+    primaryUrl: 'https://media-a.example/fallback',
+    publishedAt,
+    status: 'rejected',
+    sources: [
+      { sourceId: 'a', tier: 2, official: false, title: 'Logiciel SaaS automatisation marketing', url: 'https://media-a.example/fallback', excerpt: 'Annonce vérifiée.', publishedAt },
+      { sourceId: 'b', tier: 2, official: false, title: 'Logiciel SaaS automatisation marketing', url: 'https://media-b.example/fallback', excerpt: 'Confirmation indépendante.', publishedAt },
+    ],
+  };
+  const flexible = buildCadenceCandidatePool({
+    queueEntries: [{ payload: candidate, mtimeMs: now.getTime() }],
+    media: [mediaBySlug('logiciels')],
+    now,
+  });
+  assert.equal(flexible.length, 1);
+  assert.equal(flexible[0].qualificationProfile, 'cadence-fallback');
+  assert.equal(flexible[0].corroborated, true);
+
+  const financeCandidate = { ...candidate, id: 'finance-fallback', mediaSlug: 'investissement' };
+  const regulated = buildCadenceCandidatePool({
+    queueEntries: [{ payload: financeCandidate, mtimeMs: now.getTime() }],
+    media: [mediaBySlug('investissement')],
+    now,
+  });
+  assert.deepEqual(regulated, []);
 });
 
 test('cycle: un candidat rejeté avant une correction de taxonomie est requalifié depuis sa file', async () => {

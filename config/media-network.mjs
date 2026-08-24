@@ -278,6 +278,8 @@ export const MEDIA_ENGINE_DEFAULTS = Object.freeze({
   sourceFailureQuarantineThreshold: 3,
   candidateMaxAgeHours: 72,
   minimumCandidateScore: 70,
+  cadenceFallbackMaxAgeHours: 120,
+  cadenceFallbackMinimumScore: 60,
   shadowDaysRequired: 7,
   banner: {
     width: 1200,

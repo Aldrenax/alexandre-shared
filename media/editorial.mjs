@@ -322,6 +322,13 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
     sourceUrls,
     sourceItemIds,
     sourcePublishedAt,
+    candidateQualification: {
+      profile: candidate.qualificationProfile || 'strict',
+      score: Number(candidate.score || 0),
+      maxAgeHours: Number(candidate.maxAgeHours || 0),
+      officialRequired: Boolean(candidate.officialRequired),
+      corroborated: Boolean(candidate.corroborated),
+    },
     offer: candidate.offer || null,
     claims: Array.isArray(payload?.claims) ? payload.claims : [],
     generatedAt: generatedAt.toISOString(),
