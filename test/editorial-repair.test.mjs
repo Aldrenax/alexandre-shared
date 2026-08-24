@@ -76,7 +76,7 @@ test('réparation éditoriale: le prompt reste borné aux erreurs et au brouillo
     qa: { issues: [{ code: 'minimum_words', severity: 'error' }] },
   });
 
-  assert.equal(EDITORIAL_REVISION, 12);
+  assert.equal(EDITORIAL_REVISION, 13);
   assert.match(prompt, /RÉPARATION QA BORNÉE/);
   assert.match(prompt, /vise au moins 2250 mots utiles/);
   assert.match(prompt, /Le titre doit rester exactement: Titre vidéo exact/);
@@ -87,10 +87,12 @@ test('réparation éditoriale: le prompt reste borné aux erreurs et au brouillo
 
 test('miniatures: la réparation ne change ni la politique ni la génération unique', () => {
   const prompt = buildBannerPrompt({ media, draft });
-  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v1');
+  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v2');
   assert.match(prompt, /Crée UNE SEULE miniature/);
   assert.match(prompt, /Ne propose pas de variantes et ne génère pas de deuxième image/);
-  assert.match(prompt, /bleu signature #1641A8, blanc et noir/);
+  assert.match(prompt, /bleu signature #1641A8 dominant/);
+  assert.match(prompt, /60–70 % par la couleur de chaîne/);
+  assert.match(prompt, /toile de fond principale/);
 });
 
 test('publication: AskOptimize est autorisé mais un domaine tiers inconnu reste bloqué', () => {

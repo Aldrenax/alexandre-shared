@@ -13,32 +13,32 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 12;
-export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-single-v1';
+export const EDITORIAL_REVISION = 13;
+export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-single-v2';
 
 const ARTICLE_THUMBNAIL_PROFILES = Object.freeze({
   chaimbault: Object.freeze({
-    palette: 'blanc, gris clair, noir, avec un accent cyan #1394C7 mesuré',
+    palette: 'cyan #1394C7 dominant, avec blanc et noir réservés au contraste et à la typographie',
     tone: 'credible, net, business et anti-hype',
   }),
   'tesla-tech': Object.freeze({
-    palette: 'rouge signature #B02112, blanc et noir, avec une montée lumineuse possible vers #E33A2E, sans fond bordeaux ou noir dominant',
+    palette: 'rouge signature #B02112 dominant, avec une montée lumineuse vers #E33A2E; blanc et noir uniquement pour le contraste, sans fond bordeaux ou noir dominant',
     tone: 'énergique, orienté produit et technologie, lumineux et sans dramatisation artificielle',
   }),
   affiliation: Object.freeze({
-    palette: 'jaune signature #F4BD3D, blanc et noir, avec une montée lumineuse possible vers #FFDB70, sans fond or brun dominant',
+    palette: 'jaune signature #F4BD3D dominant, avec une montée lumineuse vers #FFDB70; blanc et noir uniquement pour le contraste, sans fond or brun dominant',
     tone: 'commercial, dynamique et lumineux, sans promesse de revenu',
   }),
   logiciels: Object.freeze({
-    palette: 'violet signature #65468A, blanc, noir et jaune, avec une montée lumineuse possible vers #8A6BB0, sans fond violet presque noir',
+    palette: 'violet signature #65468A dominant, avec une montée lumineuse vers #8A6BB0; blanc, noir et jaune uniquement pour le contraste, sans fond violet presque noir',
     tone: 'moderne, pratique, logiciel et très lisible',
   }),
   investissement: Object.freeze({
-    palette: 'vert signature #3E8C20, blanc et noir, avec une montée lumineuse possible vers #76B657, sans fond vert forêt dominant',
+    palette: 'vert signature #3E8C20 dominant, avec une montée lumineuse vers #76B657; blanc et noir uniquement pour le contraste, sans fond vert forêt dominant',
     tone: 'rassurant, mesuré, factuel et lumineux, sans gain inventé',
   }),
   entreprise: Object.freeze({
-    palette: 'bleu signature #1641A8, blanc et noir, avec une montée lumineuse possible vers #5E7DD0, sans fond marine dominant',
+    palette: 'bleu signature #1641A8 dominant, avec une montée lumineuse vers #5E7DD0; blanc et noir uniquement pour le contraste, sans fond marine dominant',
     tone: 'sérieux, rassurant, lumineux et peu dramatique',
   }),
 });
@@ -262,7 +262,8 @@ export function buildBannerPrompt({ media, draft }) {
     `Direction: ${thumbnailDirection(draft)}.`,
     `Palette de chaîne: ${profile.palette}.`,
     `Ton: ${profile.tone}.`,
-    'Rendu lumineux par défaut : privilégie un fond blanc, clair ou coloré vif. N’utilise pas de fond noir, presque noir ou très assombri sauf si le sujet l’exige explicitement.',
+    'Le décor et l’éclairage doivent être dominés à 60–70 % par la couleur de chaîne, sous forme de fond coloré, surface, halo ou dégradé lumineux. Le blanc est un neutre de contraste, jamais la toile de fond principale et ne doit pas occuper plus de 15 % de l’image sauf nécessité factuelle du sujet.',
+    'Rendu lumineux ne signifie jamais fond blanc : utilise une version claire ou moyenne de la couleur de chaîne, avec des ombres contrôlées. N’utilise pas de fond noir, presque noir ou très assombri sauf si le sujet l’exige explicitement.',
     `Texte visible exact: ${brief.headline || 'aucun texte'}. S'il y a du texte, limite absolue de 2 à 4 mots français.`,
     'Composition: un seul élément dominant, au maximum un indice secondaire et un seul bloc de texte.',
     'Privilégie un objet concret, une interface très simplifiée ou un symbole directement lié au sujet.',

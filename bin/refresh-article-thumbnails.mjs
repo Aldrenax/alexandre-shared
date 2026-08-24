@@ -3,7 +3,7 @@
 import { basename, dirname, join } from 'node:path';
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { MediaEngine, materializeBanner } from '../media/engine.mjs';
-import { buildBannerPrompt } from '../media/editorial.mjs';
+import { ARTICLE_THUMBNAIL_POLICY, buildBannerPrompt } from '../media/editorial.mjs';
 import { loadEnvironmentFile } from '../media/environment.mjs';
 import { mediaBySlug } from '../media/registry.mjs';
 import { writeJsonAtomic } from '../media/state-store.mjs';
@@ -74,12 +74,12 @@ for (const { path: draftPath, draft: originalDraft } of batch) {
         alt: response.alt || originalDraft.bannerBrief?.alt || originalDraft.title,
         width: 1200,
         height: 630,
-        source: 'hermes:image_gen:youtube-thumbnail-imagegen:article-single-v1',
+        source: `hermes:image_gen:${ARTICLE_THUMBNAIL_POLICY}`,
       },
       thumbnailRefresh: {
         refreshedAt,
         backupPath,
-        policy: 'youtube-thumbnail-imagegen:article-single-v1',
+        policy: ARTICLE_THUMBNAIL_POLICY,
         scope: 'local-draft-only',
       },
     };

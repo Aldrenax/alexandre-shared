@@ -81,14 +81,15 @@ test('miniature article: adaptation image unique de youtube-thumbnail-imagegen e
   };
   const prompt = buildBannerPrompt({ media, draft });
 
-  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v1');
+  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v2');
   assert.match(prompt, /UNE SEULE miniature/);
   assert.match(prompt, /Ne propose pas de variantes/);
   assert.match(prompt, /skill youtube-thumbnail-imagegen/);
   assert.match(prompt, /2 à 4 mots/);
   assert.match(prompt, /un seul élément dominant/);
   assert.match(prompt, /Aucun visage/);
-  assert.match(prompt, /vert signature #3E8C20, blanc et noir/);
+  assert.match(prompt, /vert signature #3E8C20 dominant/);
+  assert.match(prompt, /60–70 % par la couleur de chaîne/);
   assert.match(prompt, /Direction: Trap \/ Truth/);
   assert.match(prompt, /chiffres, prix, rendements, statistiques ou promesses non fournis et sourcés/);
   assert.match(articleThumbnailProfile(media).tone, /mesuré/);
