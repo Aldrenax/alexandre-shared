@@ -90,7 +90,7 @@ test('miniatures: la réparation ne change ni la politique ni la génération un
   assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v1');
   assert.match(prompt, /Crée UNE SEULE miniature/);
   assert.match(prompt, /Ne propose pas de variantes et ne génère pas de deuxième image/);
-  assert.match(prompt, /bleu professionnel #011F61 a #003080 et blanc/);
+  assert.match(prompt, /bleu franc #0A42B6, blanc et noir/);
 });
 
 test('publication: AskOptimize est autorisé mais un domaine tiers inconnu reste bloqué', () => {

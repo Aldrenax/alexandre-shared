@@ -18,28 +18,28 @@ export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-sing
 
 const ARTICLE_THUMBNAIL_PROFILES = Object.freeze({
   chaimbault: Object.freeze({
-    palette: 'blanc, gris clair, noir, avec un accent cyan #1394C7 tres mesure',
+    palette: 'blanc, gris clair, noir, avec un accent cyan #1394C7 mesuré',
     tone: 'credible, net, business et anti-hype',
   }),
   'tesla-tech': Object.freeze({
-    palette: 'rouge profond #7F0201 a #A00000, noir et blanc',
-    tone: 'energique, oriente produit et technologie, sans dramatisation artificielle',
+    palette: 'rouge vif #E30000, blanc et noir, sans fond bordeaux ou noir dominant',
+    tone: 'énergique, orienté produit et technologie, lumineux et sans dramatisation artificielle',
   }),
   affiliation: Object.freeze({
-    palette: 'jaune et or #C59017 a #F0B020, noir et blanc',
-    tone: 'commercial et dynamique, sans promesse de revenu',
+    palette: 'jaune lumineux #FFDA34, blanc et noir, sans fond or brun dominant',
+    tone: 'commercial, dynamique et lumineux, sans promesse de revenu',
   }),
   logiciels: Object.freeze({
-    palette: 'violet #482960 a #604080, blanc et jaune',
-    tone: 'moderne, pratique, logiciel et lisible',
+    palette: 'violet lumineux #744499, blanc, noir et jaune, sans fond violet presque noir',
+    tone: 'moderne, pratique, logiciel et très lisible',
   }),
   investissement: Object.freeze({
-    palette: 'vert finance #024F02 a #007000, noir et blanc',
-    tone: 'rassurant, mesure et factuel, sans gain invente',
+    palette: 'vert vif #019D01, blanc et noir, sans fond vert forêt dominant',
+    tone: 'rassurant, mesuré, factuel et lumineux, sans gain inventé',
   }),
   entreprise: Object.freeze({
-    palette: 'bleu professionnel #011F61 a #003080 et blanc',
-    tone: 'serieux, rassurant et peu dramatique',
+    palette: 'bleu franc #0A42B6, blanc et noir, sans fond marine dominant',
+    tone: 'sérieux, rassurant, lumineux et peu dramatique',
   }),
 });
 
@@ -262,6 +262,7 @@ export function buildBannerPrompt({ media, draft }) {
     `Direction: ${thumbnailDirection(draft)}.`,
     `Palette de chaîne: ${profile.palette}.`,
     `Ton: ${profile.tone}.`,
+    'Rendu lumineux par défaut : privilégie un fond blanc, clair ou coloré vif. N’utilise pas de fond noir, presque noir ou très assombri sauf si le sujet l’exige explicitement.',
     `Texte visible exact: ${brief.headline || 'aucun texte'}. S'il y a du texte, limite absolue de 2 à 4 mots français.`,
     'Composition: un seul élément dominant, au maximum un indice secondaire et un seul bloc de texte.',
     'Privilégie un objet concret, une interface très simplifiée ou un symbole directement lié au sujet.',
