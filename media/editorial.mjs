@@ -22,23 +22,23 @@ const ARTICLE_THUMBNAIL_PROFILES = Object.freeze({
     tone: 'credible, net, business et anti-hype',
   }),
   'tesla-tech': Object.freeze({
-    palette: 'rouge vif #E30000, blanc et noir, sans fond bordeaux ou noir dominant',
+    palette: 'rouge signature #B02112, blanc et noir, avec une montée lumineuse possible vers #E33A2E, sans fond bordeaux ou noir dominant',
     tone: 'énergique, orienté produit et technologie, lumineux et sans dramatisation artificielle',
   }),
   affiliation: Object.freeze({
-    palette: 'jaune lumineux #FFDA34, blanc et noir, sans fond or brun dominant',
+    palette: 'jaune signature #F4BD3D, blanc et noir, avec une montée lumineuse possible vers #FFDB70, sans fond or brun dominant',
     tone: 'commercial, dynamique et lumineux, sans promesse de revenu',
   }),
   logiciels: Object.freeze({
-    palette: 'violet lumineux #744499, blanc, noir et jaune, sans fond violet presque noir',
+    palette: 'violet signature #65468A, blanc, noir et jaune, avec une montée lumineuse possible vers #8A6BB0, sans fond violet presque noir',
     tone: 'moderne, pratique, logiciel et très lisible',
   }),
   investissement: Object.freeze({
-    palette: 'vert vif #019D01, blanc et noir, sans fond vert forêt dominant',
+    palette: 'vert signature #3E8C20, blanc et noir, avec une montée lumineuse possible vers #76B657, sans fond vert forêt dominant',
     tone: 'rassurant, mesuré, factuel et lumineux, sans gain inventé',
   }),
   entreprise: Object.freeze({
-    palette: 'bleu franc #0A42B6, blanc et noir, sans fond marine dominant',
+    palette: 'bleu signature #1641A8, blanc et noir, avec une montée lumineuse possible vers #5E7DD0, sans fond marine dominant',
     tone: 'sérieux, rassurant, lumineux et peu dramatique',
   }),
 });
