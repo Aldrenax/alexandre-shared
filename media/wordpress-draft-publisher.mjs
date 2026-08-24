@@ -432,6 +432,69 @@ export class WordPressDraftPublisher {
 	};
   }
 
+  async healthForAutomaticPublication(mediaSlug) {
+	const target = WORDPRESS_TARGETS[mediaSlug];
+	if (!target) throw new Error(`Média WordPress non pris en charge: ${mediaSlug || '(vide)'}`);
+	const response = await this.clientForMedia(mediaSlug).health();
+	const health = response.body || {};
+	if (
+	  health.status !== 'ok'
+	  || health.site_key !== target.siteKey
+	  || health.publication_mode !== 'auto-publish'
+	  || health.can_publish !== true
+	  || health.can_delete !== false
+	) {
+	  throw new Error(`Le endpoint WordPress ${target.siteKey} n’est pas prêt pour la publication automatique`);
+	}
+	return {
+	  status: health.status,
+	  siteKey: health.site_key,
+	  blogId: Number(health.blog_id || 0),
+	  publicationMode: health.publication_mode,
+	  canPublish: health.can_publish,
+	  canDelete: health.can_delete,
+	};
+  }
+
+  async publishAutomaticDraftPath(draftPath, { dryRun = false } = {}) {
+	const absoluteDraftPath = resolve(draftPath);
+	if (!existsSync(absoluteDraftPath)) throw new Error(`Brouillon introuvable: ${absoluteDraftPath}`);
+	let draft = readJson(absoluteDraftPath, null);
+	if (!draft) throw new Error('Brouillon JSON invalide');
+	draft = withVerifiedSourceDate(this.store, draft);
+	if (draft.publicationEligibility?.status !== 'eligible') {
+	  throw new Error('Seuls les brouillons éligibles sont publiés');
+	}
+	const payload = payloadForWordPressDraft(draft);
+	if (dryRun) return { dryRun: true, draftPath: absoluteDraftPath, payload };
+	const target = wordpressTarget(draft);
+	const client = this.clientForWrite(draft);
+	await this.healthForAutomaticPublication(draft.mediaSlug);
+	const response = await client.createDraft(payload);
+	if (
+	  response.body?.post_status !== 'publish'
+	  || response.body?.publication_mode !== 'auto-publish'
+	  || response.body?.published !== true
+	) {
+	  throw new Error('Le reçu WordPress ne confirme pas la publication');
+	}
+	const receipt = {
+	  version: 1,
+	  status: 'published-wordpress',
+	  publishedAt: this.now().toISOString(),
+	  mediaSlug: draft.mediaSlug,
+	  siteKey: target.siteKey,
+	  contentType: draft.contentType,
+	  candidateId: draft.candidateId,
+	  slug: draft.slug,
+	  draftPath: absoluteDraftPath,
+	  wordpress: response.body,
+	};
+	const receiptPath = join(this.store.stateDir, 'wordpress-publication-receipts', draft.mediaSlug, `${draft.slug}.json`);
+	writeJsonAtomic(receiptPath, receipt);
+	return { ...receipt, receiptPath };
+  }
+
   async mirrorDraftPath(draftPath, { dryRun = false, featuredMediaId = 0 } = {}) {
     const absoluteDraftPath = resolve(draftPath);
     if (!existsSync(absoluteDraftPath)) throw new Error(`Brouillon introuvable: ${absoluteDraftPath}`);

@@ -9,6 +9,7 @@ import { runPreflight } from '../media/preflight.mjs';
 import { registrySnapshot, validateRegistry } from '../media/registry.mjs';
 import { classifyRunOutcome } from '../media/run-outcome.mjs';
 import { WordPressDraftPublisher } from '../media/wordpress-draft-publisher.mjs';
+import { WordPressPublicationWorker } from '../media/wordpress-publication-worker.mjs';
 
 // Les commandes opérateur et les heartbeats appellent aussi le CLI hors
 // systemd. Charger les mêmes fichiers garantit un préflight fidèle, notamment
@@ -39,7 +40,7 @@ function offersFromPayload(payload) {
 }
 
 const command = process.argv[2] || 'validate';
-if (command === 'wordpress-health' || command === 'wordpress-shadow') {
+if (command === 'wordpress-health' || command === 'wordpress-shadow' || command === 'wordpress-publish') {
   loadEnvironmentFile(
     process.env.MEDIA_ENGINE_WORDPRESS_ENV_FILE || '/etc/alexandre-media-engine/wordpress-shadow.env',
     process.env,
@@ -116,6 +117,13 @@ try {
       ? await publisher.mirrorDraftPath(draftPath, { dryRun })
       : await publisher.run({ dryRun, limit: Number(argument('--limit', '1')) });
     output(result);
+  } else if (command === 'wordpress-publish') {
+    const worker = new WordPressPublicationWorker({ store: engine.store });
+    const draftPath = argument('--draft');
+    result = draftPath
+      ? await worker.publishDraftPath(draftPath, { dryRun })
+      : await worker.run({ mediaSlug, dryRun, limit: Number(argument('--limit', '1')) });
+    output(result);
   } else if (command === 'wordpress-health') {
     const publisher = new WordPressDraftPublisher({ store: engine.store });
     result = await publisher.healthForMedia(mediaSlug);
@@ -124,10 +132,10 @@ try {
     result = await engine.runCycle({ mediaSlug, dryRun });
     output(result);
   } else {
-    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-health|wordpress-shadow|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
+    console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-health|wordpress-shadow|wordpress-publish|health|monitor|run> [--media slug] [--draft path] [--limit n] [--dry-run] [--apply] [--json]');
     process.exitCode = 2;
   }
-  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'wordpress-shadow', 'run'].includes(command)) {
+  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'wordpress-shadow', 'wordpress-publish', 'run'].includes(command)) {
     engine.store.initialize();
     const outcome = classifyRunOutcome(command, result, { mediaSlug: mediaSlug || null });
     engine.store.recordRun(command, outcome.receipt);
