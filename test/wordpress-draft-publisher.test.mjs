@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { MediaStateStore } from '../media/state-store.mjs';
+import { MediaStateStore, writeJsonAtomic } from '../media/state-store.mjs';
 import {
   markdownBlocks,
   assetForWordPressDraft,
@@ -198,6 +198,76 @@ test('le client et le publisher prouvent le mode draft-only sans exposer le mot 
   assert.equal(JSON.parse(requests[2].options.body).featured_media, 321);
   assert.doesNotMatch(JSON.stringify(receipt), /secret-application-password/u);
   assert.equal(JSON.parse(readFileSync(receipt.receiptPath, 'utf8')).wordpress.post_status, 'draft');
+});
+
+test('la publication automatique téléverse la bannière et l’attache à l’article', async () => {
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url: String(url), options });
+    const target = String(url);
+    const isHealth = target.endsWith('/health');
+    const isAsset = target.endsWith('/assets');
+    return new Response(JSON.stringify(isHealth
+      ? { status: 'ok', site_key: 'principal', blog_id: 1, publication_mode: 'auto-publish', can_publish: true, can_delete: false }
+      : isAsset
+        ? { status: 'asset-ready', result: 'created', attachment_id: 654, publication_mode: 'auto-publish' }
+        : { result: 'created', post_id: 987, post_status: 'publish', published: true, publication_mode: 'auto-publish' }), {
+      status: isHealth ? 200 : 201,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const client = new WordPressDraftClient({
+    baseUrl: 'https://production.example.test/',
+    username: 'hermes',
+    applicationPassword: 'secret-application-password',
+    fetchImpl,
+  });
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-publish-'));
+  const bannerPath = join(root, 'banner.webp');
+  writeFileSync(bannerPath, Buffer.from('fixture-image-bytes'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const draftPath = store.saveDraft('chaimbault', draft({ banner: { path: bannerPath, alt: 'Bannière de test' } }));
+  const publisher = new WordPressDraftPublisher({ store, client, now: () => new Date('2026-08-21T13:00:00.000Z') });
+  const receipt = await publisher.publishAutomaticDraftPath(draftPath);
+  assert.equal(receipt.wordpress.post_id, 987);
+  assert.equal(receipt.asset.attachment_id, 654);
+  assert.equal(receipt.status, 'published-wordpress');
+  assert.equal(requests.length, 3);
+  assert.match(requests[1].url, /\/assets$/u);
+  assert.match(requests[2].url, /\/drafts$/u);
+  assert.equal(JSON.parse(requests[2].options.body).featured_media, 654);
+  assert.doesNotMatch(JSON.stringify(receipt), /secret-application-password/u);
+});
+
+test('la reprise automatique conserve la bannière lors de la mise à jour d’un brouillon existant', async () => {
+  const requests = [];
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-publish-resume-'));
+  const bannerPath = join(root, 'banner.webp');
+  writeFileSync(bannerPath, Buffer.from('fixture-image-bytes'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const value = draft({ banner: { path: bannerPath, alt: 'Bannière de reprise' } });
+  const draftPath = store.saveDraft('chaimbault', value);
+  const receiptPath = join(store.stateDir, 'wordpress-publication-receipts', 'chaimbault', `${value.slug}.json`);
+  writeJsonAtomic(receiptPath, {
+    wordpress: { candidate_id: 'media-engine:chaimbault:news:candidate-123', post_id: 432 },
+  });
+  const client = {
+    health: async () => ({ body: { status: 'ok', site_key: 'principal', blog_id: 1, publication_mode: 'auto-publish', can_publish: true, can_delete: false } }),
+    uploadAsset: async () => ({ body: { status: 'asset-ready', attachment_id: 654, publication_mode: 'auto-publish' } }),
+    createDraft: async () => { throw new Error('WordPress HTTP 409: alexandre_network_candidate_payload_conflict'); },
+    updateDraft: async (postId, payload) => {
+      requests.push({ postId, payload });
+      return { body: { post_id: postId, post_status: 'publish', published: true, publication_mode: 'auto-publish' } };
+    },
+  };
+  const publisher = new WordPressDraftPublisher({ store, client });
+  await publisher.publishAutomaticDraftPath(draftPath);
+  assert.equal(requests[0].postId, 432);
+  assert.equal(requests[0].payload.featured_media, 654);
+  assert.equal(requests[0].payload.candidate_id, undefined);
+  assert.equal(requests[0].payload.content_type, undefined);
 });
 
 test('le client conserve le sous-chemin du blog Multisite pour chaque endpoint', async () => {

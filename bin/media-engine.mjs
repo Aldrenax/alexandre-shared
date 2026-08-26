@@ -136,7 +136,9 @@ try {
     output(result);
   } else if (command === 'wordpress-health') {
     const publisher = new WordPressDraftPublisher({ store: engine.store });
-    result = await publisher.healthForMedia(mediaSlug);
+    result = process.env.MEDIA_ENGINE_PUBLICATION_MODE === 'automatic'
+      ? await publisher.healthForAutomaticPublication(mediaSlug)
+      : await publisher.healthForMedia(mediaSlug);
     output(result);
   } else if (command === 'run') {
     result = await engine.runCycle({ mediaSlug, dryRun });

@@ -471,11 +471,30 @@ export class WordPressDraftPublisher {
 	if (draft.publicationEligibility?.status !== 'eligible') {
 	  throw new Error('Seuls les brouillons éligibles sont publiés');
 	}
-	const payload = payloadForWordPressDraft(draft);
-	if (dryRun) return { dryRun: true, draftPath: absoluteDraftPath, payload };
+	const assetManifest = assetForWordPressDraft(draft, { includeBytes: false });
+	if (dryRun) {
+	  return {
+		dryRun: true,
+		draftPath: absoluteDraftPath,
+		asset: assetManifest,
+		payload: payloadForWordPressDraft(draft),
+	  };
+	}
 	const target = wordpressTarget(draft);
 	const client = this.clientForWrite(draft);
 	await this.healthForAutomaticPublication(draft.mediaSlug);
+	let assetReceipt = null;
+	let featuredMediaId = 0;
+	if (assetManifest) {
+	  const assetResponse = await client.uploadAsset(assetForWordPressDraft(draft));
+	  if (assetResponse.body?.status !== 'asset-ready' || assetResponse.body?.publication_mode !== 'auto-publish') {
+		throw new Error('Le reçu WordPress ne confirme pas un asset de publication automatique');
+	  }
+	  featuredMediaId = Number(assetResponse.body.attachment_id || 0);
+	  if (!Number.isInteger(featuredMediaId) || featuredMediaId < 1) throw new Error('Identifiant d’asset WordPress invalide');
+	  assetReceipt = assetResponse.body;
+	}
+	const payload = payloadForWordPressDraft(draft, { featuredMediaId });
 	let response;
 	try {
 	  response = await client.createDraft(payload);
@@ -484,14 +503,17 @@ export class WordPressDraftPublisher {
 	  // La reprise met à jour uniquement leur contenu mutable puis les publie,
 	  // sans créer un second article ni toucher aux champs immuables.
 	  if (!String(error?.message || '').startsWith('WordPress HTTP 409: alexandre_network_candidate_payload_conflict')) throw error;
-	  const mirroredPath = join(this.store.stateDir, 'wordpress-draft-receipts', draft.mediaSlug, `${draft.slug}.json`);
-	  const mirrored = readJson(mirroredPath, null);
+	  const existingReceipts = [
+		join(this.store.stateDir, 'wordpress-draft-receipts', draft.mediaSlug, `${draft.slug}.json`),
+		join(this.store.stateDir, 'wordpress-publication-receipts', draft.mediaSlug, `${draft.slug}.json`),
+	  ].map((path) => readJson(path, null)).filter(Boolean);
+	  const existing = existingReceipts.find((receipt) => receipt?.wordpress);
 	  const expectedCandidateId = `media-engine:${draft.mediaSlug}:${draft.contentType}:${draft.candidateId}`;
-	  const postId = Number(mirrored?.wordpress?.post_id || 0);
-	  if (mirrored?.wordpress?.candidate_id !== expectedCandidateId || !Number.isInteger(postId) || postId < 1) {
-	    throw new Error('Conflit WordPress sans brouillon de préproduction correspondant');
+	  const postId = Number(existing?.wordpress?.post_id || 0);
+	  if (existing?.wordpress?.candidate_id !== expectedCandidateId || !Number.isInteger(postId) || postId < 1) {
+		throw new Error('Conflit WordPress sans reçu local correspondant');
 	  }
-	  const { candidate_id, content_type, featured_media, ...mutablePayload } = payload;
+	  const { candidate_id, content_type, ...mutablePayload } = payload;
 	  response = await client.updateDraft(postId, mutablePayload);
 	}
 	if (
@@ -511,6 +533,7 @@ export class WordPressDraftPublisher {
 	  candidateId: draft.candidateId,
 	  slug: draft.slug,
 	  draftPath: absoluteDraftPath,
+	  asset: assetReceipt,
 	  wordpress: response.body,
 	};
 	const receiptPath = join(this.store.stateDir, 'wordpress-publication-receipts', draft.mediaSlug, `${draft.slug}.json`);
