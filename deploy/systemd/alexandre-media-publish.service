@@ -13,7 +13,7 @@ EnvironmentFile=-/etc/alexandre-media-engine/shadow.env
 EnvironmentFile=-/etc/alexandre-media-engine/publication.env
 EnvironmentFile=/etc/alexandre-media-engine/wordpress-shadow.env
 Environment=NPM_CONFIG_CACHE=/var/lib/alexandre-media-engine/npm-cache
-ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs wordpress-publish --limit 1 --json
+ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/media-engine.mjs wordpress-publish --limit 6 --json
 TimeoutStartSec=45min
 UMask=0027
 NoNewPrivileges=true

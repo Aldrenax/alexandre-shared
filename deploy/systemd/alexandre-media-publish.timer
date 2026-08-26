@@ -2,8 +2,8 @@
 Description=Hermes Media Engine - vérification des brouillons publiables
 
 [Timer]
-OnCalendar=*-*-* 07..20:0/10 Europe/Paris
-RandomizedDelaySec=90s
+OnCalendar=*-*-* 06..22:0/5 Europe/Paris
+RandomizedDelaySec=30s
 Persistent=true
 Unit=alexandre-media-publish.service
 
