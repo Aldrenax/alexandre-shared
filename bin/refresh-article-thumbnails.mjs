@@ -30,6 +30,7 @@ const engine = new MediaEngine();
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const entries = engine.store.listDrafts(mediaSlug)
   .filter(({ draft }) => draft?.thumbnailRefresh?.policy !== ARTICLE_THUMBNAIL_POLICY)
+  .filter(({ draft }) => !String(draft?.thumbnailRefresh?.policy || '').startsWith('rejected:'))
   .filter(({ draft }) => !newsOnly || draft?.contentType === 'news');
 const batch = representativeThumbnailBatch(entries, { limit, all });
 
