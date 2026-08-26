@@ -23,11 +23,14 @@ function positiveInteger(value, fallback) {
 
 const apply = process.argv.includes('--apply');
 const all = process.argv.includes('--all');
+const newsOnly = process.argv.includes('--news-only');
 const mediaSlug = argument('--media');
 const limit = positiveInteger(argument('--limit'), all ? Number.MAX_SAFE_INTEGER : 6);
 const engine = new MediaEngine();
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-const entries = engine.store.listDrafts(mediaSlug);
+const entries = engine.store.listDrafts(mediaSlug)
+  .filter(({ draft }) => draft?.thumbnailRefresh?.policy !== ARTICLE_THUMBNAIL_POLICY)
+  .filter(({ draft }) => !newsOnly || draft?.contentType === 'news');
 const batch = representativeThumbnailBatch(entries, { limit, all });
 
 const planned = batch.map(({ path, draft }) => ({
@@ -72,8 +75,8 @@ for (const { path: draftPath, draft: originalDraft } of batch) {
       banner: {
         path: bannerPath,
         alt: response.alt || originalDraft.bannerBrief?.alt || originalDraft.title,
-        width: 1200,
-        height: 630,
+        width: 1280,
+        height: 720,
         source: `hermes:image_gen:${ARTICLE_THUMBNAIL_POLICY}`,
       },
       thumbnailRefresh: {

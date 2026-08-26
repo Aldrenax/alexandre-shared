@@ -236,12 +236,12 @@ async function materializeBanner(imageSource, destination, fetchImpl = fetch, op
   try {
     ({ default: sharp } = await import('sharp'));
   } catch {
-    throw new Error('sharp est requis pour normaliser la bannière en 1200x630 WebP');
+    throw new Error('sharp est requis pour normaliser la bannière en 1280x720 WebP');
   }
   mkdirSync(dirname(destination), { recursive: true, mode: 0o750 });
   const temporary = `${destination}.${process.pid}.tmp`;
   await sharp(buffer)
-    .resize(1_200, 630, { fit: 'cover', position: 'attention' })
+    .resize(1_280, 720, { fit: 'cover', position: 'attention' })
     .webp({ quality: 84 })
     .toFile(temporary);
   renameSync(temporary, destination);
@@ -981,8 +981,8 @@ export class MediaEngine {
       draft.banner = {
         path: bannerPath,
         alt: bannerResult.alt || draft.bannerBrief?.alt || draft.title,
-        width: 1_200,
-        height: 630,
+        width: 1_280,
+        height: 720,
         source: `hermes:image_gen:${ARTICLE_THUMBNAIL_POLICY}`,
       };
     } else if (contentType === 'video' && video?.thumbnailPath) {

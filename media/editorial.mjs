@@ -256,7 +256,7 @@ export function buildBannerPrompt({ media, draft }) {
     `Applique les principes visuels de la skill youtube-thumbnail-imagegen sans modifier la skill source. Politique: ${ARTICLE_THUMBNAIL_POLICY}.`,
     `Crée UNE SEULE miniature d'article professionnelle pour ${media.name}.`,
     'Ne propose pas de variantes et ne génère pas de deuxième image.',
-    'Format paysage 16:9, sortie 1200x630, pensée pour une lecture immédiate sur mobile.',
+    'Format paysage 16:9, sortie 1280x720, pensée pour une lecture immédiate sur mobile.',
     `Sujet: ${draft.title}`,
     `Concept: ${brief.concept || draft.description}`,
     `Direction: ${thumbnailDirection(draft)}.`,
@@ -275,7 +275,7 @@ export function buildBannerPrompt({ media, draft }) {
     'Après génération, copie sans transformation la valeur `image` retournée par image_gen dans `imageSource`.',
     'Cette valeur peut être une URL, une data URL ou un chemin absolu dans le cache Hermes.',
     'Retourne le résultat sous ce schéma:',
-    '{"success":true,"imageSource":"valeur image exacte retournée par image_gen","alt":"texte alternatif factuel","width":1200,"height":630}',
+    '{"success":true,"imageSource":"valeur image exacte retournée par image_gen","alt":"texte alternatif factuel","width":1280,"height":720}',
   ].join('\n');
 }
 
