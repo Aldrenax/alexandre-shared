@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,13 +57,24 @@ import {
 } from '../lib/whisper.mjs';
 import { extractPublishedAt, getChannelFeed, getChannelFeedWithYtDlp, resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 
-function approvedArticleBanner(path = '/tmp/approved-thumbnail.webp') {
+const approvedBannerRoot = mkdtempSync(join(tmpdir(), 'media-approved-banner-'));
+const approvedBannerPath = join(approvedBannerRoot, 'approved-thumbnail.webp');
+writeFileSync(approvedBannerPath, Buffer.alloc(9_000, 7));
+
+function approvedArticleBanner(path = approvedBannerPath) {
+  const sha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
   return {
     path,
     alt: 'Miniature validée',
     width: 1_280,
     height: 720,
-    qa: { passed: true, policy: ARTICLE_THUMBNAIL_POLICY, issues: [] },
+    qa: {
+      passed: true,
+      policy: ARTICLE_THUMBNAIL_POLICY,
+      issues: [],
+      inspection: { sha256 },
+      visualInspection: { sha256 },
+    },
   };
 }
 
@@ -114,7 +126,7 @@ test('miniature article: adaptation image unique de youtube-thumbnail-imagegen e
   };
   const prompt = buildBannerPrompt({ media, draft });
 
-  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v3-qa');
+  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v4-independent-qa');
   assert.match(prompt, /EXACTLY ONE professional article thumbnail/);
   assert.match(prompt, /no variants/);
   assert.match(prompt, /youtube-thumbnail-imagegen.*skill/);

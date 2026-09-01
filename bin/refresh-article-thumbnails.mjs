@@ -13,10 +13,16 @@ import {
   ThumbnailGenerationBudget,
 } from '../media/thumbnail-generation.mjs';
 import {
+  dueThumbnailRefreshEntries,
   persistReconciledThumbnail,
   reconciledThumbnailDraft,
-  thumbnailRefreshQueueDecision,
+  thumbnailAttemptLedgerKey,
+  thumbnailRefreshAttemptState,
+  thumbnailRefreshExitCode,
+  thumbnailRefreshQueueId,
+  thumbnailRefreshRetryDelayMinutes,
   thumbnailRefreshSelection,
+  reconcileThumbnailQueues,
 } from '../media/thumbnail-refresh.mjs';
 
 loadEnvironmentFile(process.env.MEDIA_ENGINE_ENV_FILE || '/etc/alexandre-media-engine/media-engine.env');
@@ -29,14 +35,6 @@ function argument(name, fallback = null) {
 function positiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function retryDelayMinutes(attempts) {
-  return Math.min(1_440, 15 * (2 ** Math.max(0, attempts - 1)));
-}
-
-function queueId(draft) {
-  return `${draft.mediaSlug}-${draft.contentType}-${draft.slug}`;
 }
 
 function failureEvent(engine, draft, draftPath, qa, attempts, status) {
@@ -58,6 +56,7 @@ function failureEvent(engine, draft, draftPath, qa, attempts, status) {
 }
 
 const apply = process.argv.includes('--apply');
+const scheduled = process.argv.includes('--scheduled');
 const newsOnly = process.argv.includes('--news-only');
 const mediaSlug = argument('--media');
 if (process.argv.includes('--limit')) {
@@ -65,6 +64,22 @@ if (process.argv.includes('--limit')) {
 }
 
 const engine = new MediaEngine();
+let refreshLease = null;
+if (apply) {
+  engine.store.initialize();
+  refreshLease = engine.store.acquireLease('thumbnail-refresh-cycle', { ttlMs: 13 * 60 * 60_000 });
+  if (!refreshLease) {
+    console.log(JSON.stringify({
+      dryRun: false,
+      scheduled,
+      skipped: true,
+      reason: 'thumbnail-refresh-lease-active',
+    }, null, 2));
+    process.exit(0);
+  }
+}
+
+try {
 const stamp = new Date().toISOString().replace(/[:.]/gu, '-');
 const maxAttemptsPerRun = positiveInteger(
   argument('--max-attempts-per-thumbnail', process.env.MEDIA_ENGINE_THUMBNAIL_MAX_ATTEMPTS_PER_ITEM),
@@ -74,16 +89,20 @@ const maxTotalAttempts = positiveInteger(process.env.MEDIA_ENGINE_THUMBNAIL_MAX_
 const budget = ThumbnailGenerationBudget.fromEnvironment({
   ...process.env,
   MEDIA_ENGINE_THUMBNAIL_GLOBAL_ATTEMPT_BUDGET: argument('--budget', process.env.MEDIA_ENGINE_THUMBNAIL_GLOBAL_ATTEMPT_BUDGET),
-});
+}, { stateStore: engine.store });
+const recoveredTransitions = apply
+  ? reconcileThumbnailQueues(engine.store, { maxTotalAttempts })
+  : [];
 const queueById = new Map(engine.store.listQueueEntries('thumbnail-refresh')
   .map((entry) => [entry.payload?.queueId, entry.payload]));
-const entries = thumbnailRefreshSelection(engine.store.listDrafts(mediaSlug))
+const refreshableEntries = thumbnailRefreshSelection(engine.store.listDrafts(mediaSlug))
   .filter(({ draft }) => draft?.banner?.qa?.policy !== ARTICLE_THUMBNAIL_POLICY || draft?.banner?.qa?.passed !== true)
-  .filter(({ draft }) => !newsOnly || draft?.contentType === 'news')
-  .filter(({ draft }) => {
-    const queued = queueById.get(queueId(draft));
-    return thumbnailRefreshQueueDecision(queued, { maxTotalAttempts }).selected;
-  });
+  .filter(({ draft }) => !newsOnly || draft?.contentType === 'news');
+const entries = dueThumbnailRefreshEntries(refreshableEntries, {
+  queueById,
+  scheduled,
+  maxTotalAttempts,
+});
 
 const planned = entries.map(({ path, draft }) => ({
   mediaSlug: draft.mediaSlug,
@@ -91,7 +110,7 @@ const planned = entries.map(({ path, draft }) => ({
   title: draft.title,
   slug: draft.slug,
   draftPath: path,
-  previousAttempts: Number(queueById.get(queueId(draft))?.attempts || 0),
+  previousAttempts: Number(queueById.get(thumbnailRefreshQueueId(draft))?.attempts || 0),
 }));
 
 if (!apply) {
@@ -99,7 +118,6 @@ if (!apply) {
   process.exit(0);
 }
 
-engine.store.initialize();
 for (const queued of queueById.values()) {
   if (queued?.status === 'quarantined' && queued.queueId) {
     engine.store.removeQueueEntry('publication-ready', queued.queueId);
@@ -108,9 +126,13 @@ for (const queued of queueById.values()) {
 const results = [];
 for (const { path: draftPath, draft: originalDraft } of entries) {
   const media = mediaBySlug(originalDraft.mediaSlug);
-  const id = queueId(originalDraft);
+  const id = thumbnailRefreshQueueId(originalDraft);
   const previousQueue = queueById.get(id) || {};
-  const previousAttempts = Number(previousQueue.attempts || 0);
+  const previousAttempts = Math.max(
+    Number(previousQueue.attempts || 0),
+    Number(originalDraft?.thumbnailRefresh?.attempts || 0),
+    Number(originalDraft?.thumbnailGeneration?.attemptCount || 0),
+  );
   if (!media) {
     results.push({ draftPath, status: 'skipped', reason: 'unknown-media' });
     continue;
@@ -130,10 +152,21 @@ for (const { path: draftPath, draft: originalDraft } of entries) {
     materialize: (imageSource, path) => materializeBanner(imageSource, path, engine.fetchImpl),
     candidatePathForAttempt: (attempt) => join(candidateRoot, `attempt-${previousAttempts + attempt}.webp`),
     budget,
+    attemptLedger: {
+      store: engine.store,
+      key: thumbnailAttemptLedgerKey(originalDraft),
+      minimumAttempts: previousAttempts,
+      maximumAttempts: maxTotalAttempts,
+      scope: scheduled ? 'thumbnail-refresh-timer' : 'thumbnail-refresh-manual',
+    },
     maxAttempts: attemptAllowance,
   });
-  const allAttempts = [...(previousQueue.attemptLog || []), ...thumbnail.attempts];
-  const totalAttempts = previousAttempts + thumbnail.attempts.length;
+  const attemptState = thumbnailRefreshAttemptState(previousQueue, thumbnail.attempts, {
+    maxTotalAttempts,
+    reservedAttempts: thumbnail.itemAttempts,
+  });
+  const allAttempts = attemptState.attemptLog;
+  const totalAttempts = attemptState.attempts;
   if (thumbnail.passed) {
     const finalPath = join(engine.store.assetsDir, media.slug, `${originalDraft.slug}.webp`);
     const promoted = promoteThumbnailCandidate(thumbnail.path, finalPath, {
@@ -190,8 +223,12 @@ for (const { path: draftPath, draft: originalDraft } of entries) {
     continue;
   }
 
-  const exhausted = totalAttempts >= maxTotalAttempts;
-  const nextAttemptAt = exhausted ? null : new Date(Date.now() + retryDelayMinutes(totalAttempts) * 60_000).toISOString();
+  const exhausted = attemptState.exhausted;
+  const circuitRetryAt = Date.parse(thumbnail.nextRetryAt || '');
+  const nextAttemptAt = exhausted ? null : new Date(Math.max(
+    Date.now() + thumbnailRefreshRetryDelayMinutes(totalAttempts) * 60_000,
+    Number.isFinite(circuitRetryAt) ? circuitRetryAt : 0,
+  )).toISOString();
   const queuePayload = {
     version: 1,
     queueId: id,
@@ -238,5 +275,16 @@ if (budget.openReason) {
   });
 }
 
-console.log(JSON.stringify({ dryRun: false, selected: planned.length, processed: results.length, budget: budget.snapshot(), results }, null, 2));
-if (results.some((result) => ['retry-scheduled', 'quarantined'].includes(result.status))) process.exitCode = 1;
+console.log(JSON.stringify({
+  dryRun: false,
+  scheduled,
+  recoveredTransitions,
+  selected: planned.length,
+  processed: results.length,
+  budget: budget.snapshot(),
+  results,
+}, null, 2));
+process.exitCode = thumbnailRefreshExitCode(results, { scheduled });
+} finally {
+  if (refreshLease) engine.store.releaseLease(refreshLease);
+}

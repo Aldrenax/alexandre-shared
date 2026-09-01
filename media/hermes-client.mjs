@@ -1,7 +1,24 @@
 import { spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { chownSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { officialThumbnailAssets } from './thumbnail-policy.mjs';
 
 export const DEFAULT_EDITORIAL_PROVIDER = 'openai-codex';
 export const DEFAULT_EDITORIAL_MODEL = 'gpt-5.6-terra';
+const DEFAULT_HERMES_VISION_STAGING_HOST_ROOT = '/var/lib/hermes-agent/media-engine';
+const DEFAULT_HERMES_VISION_STAGING_CONTAINER_ROOT = '/opt/data/media-engine';
+
+function numericDockerOwnership(env = process.env) {
+  const explicitUid = String(env.HERMES_VISION_STAGING_UID || '').trim();
+  const explicitGid = String(env.HERMES_VISION_STAGING_GID || '').trim();
+  const dockerUser = String(env.HERMES_DOCKER_USER || '').trim();
+  const [dockerUid = '', dockerGid = dockerUid] = dockerUser.split(':', 2);
+  const uidText = explicitUid || dockerUid;
+  const gidText = explicitGid || dockerGid;
+  if (!/^\d+$/u.test(uidText) || !/^\d+$/u.test(gidText)) return null;
+  return { uid: Number.parseInt(uidText, 10), gid: Number.parseInt(gidText, 10) };
+}
 
 function defaultHermesCommand(env = process.env) {
   if (env.HERMES_COMMAND_JSON) {
@@ -271,6 +288,69 @@ export class HermesClient {
       toolsets: ['image_gen'],
       timeoutMs: 600_000,
     });
+  }
+
+  async inspectThumbnailJson({ path, media, draft, inspection }) {
+    const normalizedPath = resolve(String(path || ''));
+    if (!existsSync(normalizedPath)) throw new Error('Miniature normalisée introuvable pour Hermes vision');
+    const bytes = readFileSync(normalizedPath);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (!inspection?.sha256 || inspection.sha256 !== sha256) {
+      throw new Error('La miniature a changé avant l’inspection Hermes vision');
+    }
+
+    const hostRoot = resolve(this.env.HERMES_VISION_STAGING_HOST_ROOT || DEFAULT_HERMES_VISION_STAGING_HOST_ROOT);
+    const containerRoot = String(
+      this.env.HERMES_VISION_STAGING_CONTAINER_ROOT || DEFAULT_HERMES_VISION_STAGING_CONTAINER_ROOT,
+    ).replace(/\/+$/u, '');
+    const relativeName = join('thumbnail-qa', `${sha256}-${process.pid}-${randomUUID()}.webp`);
+    const stagedHostPath = join(hostRoot, relativeName);
+    const temporaryPath = `${stagedHostPath}.tmp`;
+    const stagedContainerPath = `${containerRoot}/${relativeName.replaceAll('\\', '/')}`;
+    const stagingDirectory = dirname(stagedHostPath);
+    const ownership = numericDockerOwnership(this.env);
+    mkdirSync(stagingDirectory, { recursive: true, mode: 0o750 });
+    if (ownership) chownSync(stagingDirectory, ownership.uid, ownership.gid);
+
+    try {
+      // The host service runs as root while Hermes runs under its unprivileged
+      // container uid. Ownership is transferred before the atomic rename so
+      // the transient image can stay private to root and Hermes.
+      writeFileSync(temporaryPath, bytes, { mode: 0o640 });
+      if (ownership) chownSync(temporaryPath, ownership.uid, ownership.gid);
+      renameSync(temporaryPath, stagedHostPath);
+      const expectedText = String(draft?.bannerBrief?.headline || '').trim();
+      const officialAssets = officialThumbnailAssets(draft);
+      const payload = await this.oneshotJson([
+        'Tu es le second contrôleur visuel indépendant d’une miniature déjà générée et normalisée.',
+        `Média contrôlé: ${media?.name || media?.slug || draft?.mediaSlug || 'inconnu'}.`,
+        `Utilise impérativement l’outil vision exactement une fois sur ce fichier local: ${stagedContainerPath}`,
+        'Inspecte les pixels de ce fichier final. N’utilise et ne répète aucune auto-déclaration du générateur.',
+        `SHA-256 de référence calculé par le moteur: ${sha256}`,
+        `Dimensions finales attendues: 1280x720. Headline exact attendu: ${expectedText || '(aucun texte)'}.`,
+        'Évalue la transcription exacte, tout rognage, la lisibilité à 360 px de large et les éléments de marque ou humains réellement visibles.',
+        'Si un headline est présent, fournis sa boîte englobante normalisée entre 0 et 1 sous la forme left/top/right/bottom. Utilise null si aucun texte n’est visible.',
+        `Assets officiels déterministes autorisés (liste vide = aucun logo, interface ou visage): ${JSON.stringify(officialAssets)}.`,
+        'Si l’image ne peut pas être ouverte ou si un champ ne peut pas être vérifié, retourne success=false. Ne devine jamais.',
+        'Schéma exact: {"success":true,"observedText":"","textExact":true,"textClipped":false,"mobileReadable":true,"textBoundingBox":null,"usesLogo":false,"usesInterface":false,"usesFace":false,"notes":[]}',
+      ].join('\n'), {
+        provider: this.env.HERMES_VISION_PROVIDER || this.env.HERMES_EDITORIAL_PROVIDER || DEFAULT_EDITORIAL_PROVIDER,
+        model: this.env.HERMES_VISION_MODEL || this.env.HERMES_EDITORIAL_MODEL || DEFAULT_EDITORIAL_MODEL,
+        reasoning: 'medium',
+        toolsets: ['vision'],
+        timeoutMs: 300_000,
+      });
+      return {
+        ...payload,
+        method: 'hermes-vision',
+        independent: true,
+        sha256,
+        checkedAt: new Date().toISOString(),
+      };
+    } finally {
+      if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+      if (existsSync(stagedHostPath)) unlinkSync(stagedHostPath);
+    }
   }
 }
 

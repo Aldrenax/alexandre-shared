@@ -1,0 +1,30 @@
+[Unit]
+Description=Hermes Media Engine - reprises QA des miniatures articles
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+OnFailure=alexandre-media-monitor.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/alexandre-media-engine/current
+EnvironmentFile=-/etc/alexandre-media-engine/media-engine.env
+EnvironmentFile=-/etc/alexandre-media-engine/shadow.env
+ExecStartPre=/opt/alexandre-media-engine/current/bin/ensure-hermes-log-permissions.sh
+ExecStart=/usr/bin/node /opt/alexandre-media-engine/current/bin/refresh-article-thumbnails.mjs --apply --scheduled
+TimeoutStartSec=12h
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadOnlyPaths=/opt/alexandre-media-engine/current /var/lib/hermes-agent/business-data /var/lib/hermes-agent/cache/images
+ReadWritePaths=/var/lib/alexandre-media-engine /var/lib/hermes-agent/media-engine

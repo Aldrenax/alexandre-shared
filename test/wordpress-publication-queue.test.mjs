@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,6 +10,11 @@ import { WordPressPublicationWorker } from '../media/wordpress-publication-worke
 import { ARTICLE_THUMBNAIL_POLICY } from '../media/thumbnail-policy.mjs';
 
 const NOW = new Date('2026-08-24T09:00:00.000Z');
+const bannerRoot = mkdtempSync(join(tmpdir(), 'wordpress-queue-banner-'));
+const bannerPath = join(bannerRoot, 'approved-thumbnail.webp');
+const bannerBytes = Buffer.alloc(9_000, 4);
+writeFileSync(bannerPath, bannerBytes);
+const bannerSha256 = createHash('sha256').update(bannerBytes).digest('hex');
 
 function eligibleDraft(overrides = {}) {
   return {
@@ -21,11 +27,17 @@ function eligibleDraft(overrides = {}) {
     publicationMode: 'draft',
     qa: { passed: true },
     banner: {
-      path: '/tmp/approved-thumbnail.webp',
+      path: bannerPath,
       alt: 'Miniature validée',
       width: 1_280,
       height: 720,
-      qa: { passed: true, policy: ARTICLE_THUMBNAIL_POLICY, issues: [] },
+      qa: {
+        passed: true,
+        policy: ARTICLE_THUMBNAIL_POLICY,
+        issues: [],
+        inspection: { sha256: bannerSha256 },
+        visualInspection: { sha256: bannerSha256 },
+      },
     },
     publicationEligibility: { status: 'eligible' },
     ...overrides,

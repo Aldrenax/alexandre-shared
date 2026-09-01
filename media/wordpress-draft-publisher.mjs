@@ -299,8 +299,10 @@ export function assetForWordPressDraft(draft, { includeBytes = true } = {}) {
   const bytes = readFileSync(path);
   if (!bytes.length || bytes.length > WORDPRESS_ASSET_MAX_BYTES) throw new Error('La bannière WordPress dépasse la limite de 3 Mo');
   const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const inspectedSha256 = String(draft.banner?.qa?.inspection?.sha256 || '');
+  if (sha256 !== inspectedSha256) throw new Error('La bannière WordPress a changé depuis son inspection visuelle');
   const asset = {
-    asset_id: `media-engine:${draft.mediaSlug}:${draft.contentType}:${draft.candidateId}:banner`,
+    asset_id: `media-engine:${draft.mediaSlug}:${draft.contentType}:${draft.candidateId}:banner:${sha256}`,
     filename: basename(path),
     mime,
     sha256,
@@ -391,7 +393,9 @@ export class WordPressDraftClient {
 
   uploadAsset(payload) {
     const { byte_length: byteLength, ...body } = payload;
-    if (byteLength !== Buffer.byteLength(body.bytes_base64 || '', 'base64')) throw new Error('La taille de l’asset WordPress a changé avant envoi');
+    const bytes = Buffer.from(body.bytes_base64 || '', 'base64');
+    if (byteLength !== bytes.length) throw new Error('La taille de l’asset WordPress a changé avant envoi');
+    if (createHash('sha256').update(bytes).digest('hex') !== body.sha256) throw new Error('Le SHA-256 de l’asset WordPress ne correspond pas aux octets envoyés');
     return this.request('/wp-json/alexandre-network/v1/assets', { method: 'POST', body: JSON.stringify(body) });
   }
 }

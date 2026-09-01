@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -33,14 +34,30 @@ Troisième paragraphe utile.
 
 Quatrième paragraphe de conclusion.`;
 
+const approvedBannerRoot = mkdtempSync(join(tmpdir(), 'wordpress-approved-banner-'));
+const approvedBannerPath = join(approvedBannerRoot, 'approved-thumbnail.webp');
+writeFileSync(approvedBannerPath, Buffer.from('approved-thumbnail-fixture'));
+
 function draft(overrides = {}) {
+  const bannerOverrides = overrides.banner || {};
+  const path = bannerOverrides.path || approvedBannerPath;
+  const sha256 = existsSync(path)
+    ? createHash('sha256').update(readFileSync(path)).digest('hex')
+    : '0'.repeat(64);
   const banner = {
-    path: '/tmp/approved-thumbnail.webp',
+    path,
     alt: 'Miniature validée',
     width: 1_280,
     height: 720,
-    qa: { passed: true, policy: ARTICLE_THUMBNAIL_POLICY, issues: [] },
-    ...(overrides.banner || {}),
+    ...bannerOverrides,
+    qa: {
+      passed: true,
+      policy: ARTICLE_THUMBNAIL_POLICY,
+      issues: [],
+      inspection: { sha256 },
+      visualInspection: { sha256 },
+      ...(bannerOverrides.qa || {}),
+    },
   };
   return {
     candidateId: 'candidate-123',
@@ -144,7 +161,7 @@ test('la bannière locale devient un asset borné et vérifié par SHA-256', () 
   assert.equal(asset.byte_length, 19);
   assert.match(asset.sha256, /^[a-f0-9]{64}$/u);
   assert.equal(Buffer.from(asset.bytes_base64, 'base64').toString(), 'fixture-image-bytes');
-  assert.equal(asset.asset_id, 'media-engine:chaimbault:news:candidate-123:banner');
+  assert.equal(asset.asset_id, `media-engine:chaimbault:news:candidate-123:banner:${asset.sha256}`);
   assert.equal(assetForWordPressDraft(draft({ contentType: 'video' })), null);
 });
 
@@ -248,6 +265,30 @@ test('la publication automatique téléverse la bannière et l’attache à l’
   assert.match(requests[2].url, /\/drafts$/u);
   assert.equal(JSON.parse(requests[2].options.body).featured_media, 654);
   assert.doesNotMatch(JSON.stringify(receipt), /secret-application-password/u);
+});
+
+test('une mutation du fichier après inspection bloque WordPress avant upload', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wordpress-mutated-banner-'));
+  const bannerPath = join(root, 'banner.webp');
+  writeFileSync(bannerPath, Buffer.from('inspected-bytes-same-size'));
+  const store = new MediaStateStore(root);
+  store.initialize();
+  const value = draft({ banner: { path: bannerPath, alt: 'Bannière inspectée' } });
+  const draftPath = store.saveDraft('chaimbault', value);
+  let uploads = 0;
+  let creates = 0;
+  const client = {
+    health: async () => {
+      writeFileSync(bannerPath, Buffer.from('mutated--bytes-same-size'));
+      return { body: { status: 'ok', site_key: 'principal', blog_id: 1, publication_mode: 'auto-publish', can_publish: true, can_delete: false } };
+    },
+    uploadAsset: async () => { uploads += 1; return { body: {} }; },
+    createDraft: async () => { creates += 1; return { body: {} }; },
+  };
+  const publisher = new WordPressDraftPublisher({ store, client });
+  await assert.rejects(() => publisher.publishAutomaticDraftPath(draftPath), /changé|mutated/u);
+  assert.equal(uploads, 0);
+  assert.equal(creates, 0);
 });
 
 test('la reprise automatique conserve la bannière lors de la mise à jour d’un brouillon existant', async () => {

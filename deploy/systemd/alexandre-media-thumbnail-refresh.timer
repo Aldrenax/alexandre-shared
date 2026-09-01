@@ -1,0 +1,11 @@
+[Unit]
+Description=Hermes Media Engine - reprise des miniatures toutes les 15 minutes
+
+[Timer]
+OnCalendar=*-*-* *:07/15:00 Europe/Paris
+RandomizedDelaySec=2min
+Persistent=true
+Unit=alexandre-media-thumbnail-refresh.service
+
+[Install]
+WantedBy=timers.target

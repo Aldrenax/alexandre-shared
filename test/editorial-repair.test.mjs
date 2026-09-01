@@ -87,7 +87,7 @@ test('réparation éditoriale: le prompt reste borné aux erreurs et au brouillo
 
 test('miniatures: la réparation ne change ni la politique ni la génération unique', () => {
   const prompt = buildBannerPrompt({ media, draft });
-  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v3-qa');
+  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v4-independent-qa');
   assert.match(prompt, /EXACTLY ONE professional article thumbnail/);
   assert.match(prompt, /no variants and no second image/);
   assert.match(prompt, /signature blue #1641A8 dominant/);

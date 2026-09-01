@@ -33,8 +33,24 @@ RELEASE_DIR="$RELEASE_ROOT/releases/$RELEASE_ID"
 install -d -m 0750 "$RELEASE_ROOT/releases" "$CONFIG_DIR" "$RUNTIME_DIR" /var/lib/hermes-agent/media-engine/assets "$RELEASE_DIR"
 git -C "$SOURCE_DIR" archive HEAD | tar -x -C "$RELEASE_DIR"
 /usr/bin/npm ci --omit=dev --ignore-scripts --prefix "$RELEASE_DIR"
-ln -sfn "$RELEASE_DIR" "$RELEASE_ROOT/current.next"
-mv -Tf "$RELEASE_ROOT/current.next" "$RELEASE_ROOT/current"
+
+# Aucun fichier d'unité ni symlink ne change tant qu'une unité susceptible de
+# charger /opt/alexandre-media-engine/current est active. L'arrêt reste une
+# action de maintenance explicite; l'installeur se contente de refuser.
+for unit in \
+  alexandre-media-network.timer alexandre-media-network.service \
+  alexandre-media-video.timer alexandre-media-video.service \
+  alexandre-media-guide.timer alexandre-media-guide.service \
+  alexandre-media-thumbnail-refresh.timer alexandre-media-thumbnail-refresh.service \
+  alexandre-media-monitor.timer alexandre-media-monitor.service \
+  alexandre-media-publish.path alexandre-media-publish.timer alexandre-media-publish.service \
+  alexandre-wordpress-draft.timer alexandre-wordpress-draft.service \
+  alexandre-newsletter-shadow.service; do
+  if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then
+    echo "Installation refusée: $unit est actif ou activé au démarrage. Aucune unité ni release n'a été basculée." >&2
+    exit 1
+  fi
+done
 
 # Une installation ne supprime aucun rollback par défaut. Le nettoyage est une
 # action destructive séparée, à n'exécuter qu'après autorisation explicite.
@@ -74,6 +90,9 @@ for unit in "$SOURCE_DIR"/deploy/systemd/*.{service,timer,path}; do
   install -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
 done
 systemctl daemon-reload
+
+ln -sfn "$RELEASE_DIR" "$RELEASE_ROOT/current.next"
+mv -Tf "$RELEASE_ROOT/current.next" "$RELEASE_ROOT/current"
 
 echo "Release installée: $RELEASE_DIR"
 echo "Aucun timer n'a été activé. Lancer le préflight puis activate-shadow.sh --apply."

@@ -31,6 +31,30 @@ if ! printf '%s' "$preflight" | /usr/bin/node -e '
   exit 1
 fi
 
+if ! thumbnail_vision_preflight="$(/usr/bin/node /opt/alexandre-media-engine/current/bin/thumbnail-vision-preflight.mjs)"; then
+  printf '%s\n' "$thumbnail_vision_preflight"
+  echo "Canari Hermes vision refusé; aucun timer n'a été activé." >&2
+  exit 1
+fi
+printf '%s\n' "$thumbnail_vision_preflight" | /usr/bin/node -e '
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => {
+    const result = JSON.parse(input);
+    process.exit(result.check === "thumbnail-vision-preflight" && result.passed === true ? 0 : 1);
+  });
+' || {
+  echo "Verdict du canari Hermes vision invalide; aucun timer n'a été activé." >&2
+  exit 1
+}
+printf '%s\n' "$thumbnail_vision_preflight" | /usr/bin/node -e '
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => console.log(JSON.stringify(JSON.parse(input), null, 2)));
+'
+
 if [[ ! -e /etc/alexandre-media-engine/shadow.env ]]; then
   install -m 0640 /dev/null /etc/alexandre-media-engine/shadow.env
   printf 'MEDIA_ENGINE_SHADOW_STARTED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/alexandre-media-engine/shadow.env
@@ -40,6 +64,7 @@ systemctl enable --now \
   alexandre-media-network.timer \
   alexandre-media-video.timer \
   alexandre-media-guide.timer \
+  alexandre-media-thumbnail-refresh.timer \
   alexandre-media-monitor.timer
 
 echo "Mode shadow actif. Publication et push restent désactivés."

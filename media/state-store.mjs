@@ -8,6 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { hostname } from 'node:os';
 
@@ -26,6 +27,106 @@ const QUEUE_KINDS = new Set([
 
 function ensureDir(path) {
   mkdirSync(path, { recursive: true, mode: 0o750 });
+}
+
+const LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSync(milliseconds) {
+  Atomics.wait(LOCK_SLEEP_BUFFER, 0, 0, Math.max(1, milliseconds));
+}
+
+function safeLockName(name) {
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name)) throw new Error(`Nom de verrou invalide: ${name}`);
+  return name;
+}
+
+function localOwnerIsDead(owner) {
+  if (!owner || owner.host !== hostname()) return false;
+  const pid = Number(owner.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return true;
+    // EPERM prouve aussi qu'un processus occupe encore ce PID. Toute erreur
+    // inconnue reste fail-closed : un verrou vivant ne doit jamais être repris.
+    return false;
+  }
+}
+
+function installOwnedDirectory(targetPath, owner) {
+  const candidatePath = `${targetPath}.candidate-${process.pid}-${owner.token}`;
+  mkdirSync(candidatePath, { mode: 0o750 });
+  try {
+    writeJsonAtomic(join(candidatePath, 'owner.json'), owner);
+    try {
+      // Le répertoire et son owner deviennent visibles en une seule opération.
+      // Un kill avant le rename ne laisse qu'un candidat unique et non bloquant.
+      renameSync(candidatePath, targetPath);
+      return true;
+    } catch (error) {
+      if (!['EEXIST', 'ENOTEMPTY', 'EISDIR'].includes(error?.code)) throw error;
+      return false;
+    }
+  } finally {
+    if (existsSync(candidatePath)) rmSync(candidatePath, { recursive: true, force: true });
+  }
+}
+
+function retireOwnedDirectory(targetPath, token) {
+  const currentOwner = readJson(join(targetPath, 'owner.json'), null);
+  if (!currentOwner?.token || currentOwner.token !== token) return false;
+  const retiredPath = `${targetPath}.retired-${process.pid}-${token}`;
+  try {
+    // Détacher atomiquement notre génération avant de la supprimer. Un
+    // successeur peut alors installer son propre répertoire au chemin canonique
+    // sans que le nettoyage récursif ne touche jamais ses fichiers.
+    renameSync(targetPath, retiredPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+  const retiredOwner = readJson(join(retiredPath, 'owner.json'), null);
+  if (retiredOwner?.token !== token) {
+    if (!existsSync(targetPath)) renameSync(retiredPath, targetPath);
+    return false;
+  }
+  rmSync(retiredPath, { recursive: true, force: true });
+  return true;
+}
+
+function ownsDirectory(targetPath, token) {
+  return readJson(join(targetPath, 'owner.json'), null)?.token === token;
+}
+
+function ownerlessDirectoryIsStale(targetPath, observedAt, graceMs) {
+  if (readJson(join(targetPath, 'owner.json'), null)) return false;
+  try {
+    return observedAt - statSync(targetPath).mtimeMs > graceMs;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function retireOwnerlessDirectory(targetPath, observedAt, graceMs) {
+  if (!ownerlessDirectoryIsStale(targetPath, observedAt, graceMs)) return false;
+  const retiredPath = `${targetPath}.ownerless-retired-${process.pid}-${randomUUID()}`;
+  try {
+    renameSync(targetPath, retiredPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+  // Revalider après le rename ferme la course avec un ancien writer qui aurait
+  // posé owner.json pendant la grâce. Dans ce cas, ne jamais le supprimer.
+  if (readJson(join(retiredPath, 'owner.json'), null)) {
+    if (!existsSync(targetPath)) renameSync(retiredPath, targetPath);
+    return false;
+  }
+  rmSync(retiredPath, { recursive: true, force: true });
+  return true;
 }
 
 export function readJson(path, fallback = null) {
@@ -84,6 +185,17 @@ export class MediaStateStore {
   update(name, updater, fallback = {}) {
     const current = this.read(name, fallback);
     return this.write(name, updater(current));
+  }
+
+  updateLocked(name, updater, fallback = {}, {
+    lockName = `state-${name}`,
+    ttlMs = 30_000,
+    timeoutMs = 30_000,
+  } = {}) {
+    return this.withExclusiveLock(lockName, () => this.update(name, updater, fallback), {
+      ttlMs,
+      timeoutMs,
+    });
   }
 
   hasEvent(key) {
@@ -202,11 +314,13 @@ export class MediaStateStore {
     return path;
   }
 
-  saveDraft(mediaSlug, draft) {
-    const directory = join(this.draftsDir, mediaSlug);
-    ensureDir(directory);
+  draftPath(mediaSlug, draft) {
     const safeId = String(draft.candidateId).replace(/[^a-z0-9._-]/gi, '-').slice(0, 160);
-    const path = join(directory, `${safeId}-${draft.contentType}.json`);
+    return join(this.draftsDir, mediaSlug, `${safeId}-${draft.contentType}.json`);
+  }
+
+  saveDraft(mediaSlug, draft) {
+    const path = this.draftPath(mediaSlug, draft);
     writeJsonAtomic(path, draft);
     return path;
   }
@@ -231,30 +345,141 @@ export class MediaStateStore {
 
   acquireLease(name, { ttlMs = 30 * 60_000, now = Date.now() } = {}) {
     this.initialize();
-    const lockPath = join(this.locksDir, `${name}.lock`);
-    if (existsSync(lockPath)) {
-      const age = now - statSync(lockPath).mtimeMs;
-      if (age <= ttlMs) return null;
-      rmSync(lockPath, { recursive: true, force: true });
-    }
-    try {
-      mkdirSync(lockPath, { mode: 0o750 });
-    } catch (error) {
-      if (error?.code === 'EEXIST') return null;
-      throw error;
-    }
+    const leaseName = safeLockName(name);
+    const lockPath = join(this.locksDir, `${leaseName}.lock`);
+    const observedAt = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+    const token = randomUUID();
     const owner = {
       host: hostname(),
       pid: process.pid,
-      acquiredAt: new Date(now).toISOString(),
+      token,
+      acquiredAt: new Date(observedAt).toISOString(),
       ttlMs,
     };
-    writeJsonAtomic(join(lockPath, 'owner.json'), owner);
-    return { name, lockPath, owner };
+    const recoveryPath = `${lockPath}.recovery`;
+    const ownerlessGraceMs = Math.min(Math.max(1_000, Number(ttlMs) || 30_000), 30_000);
+
+    // Ne jamais entrer pendant qu'un récupérateur a déjà déplacé l'ancien
+    // lease. Un prétendant ayant passé ce test juste avant le guard reste sûr :
+    // son rename atomique gagnera, et le récupérateur ne supprimera pas ce
+    // nouveau propriétaire.
+    if (existsSync(recoveryPath)) {
+      const staleRecoveryOwner = readJson(join(recoveryPath, 'owner.json'), null);
+      // Un PID local confirmé mort est une preuve plus forte que le TTL : le
+      // prochain timer peut reprendre immédiatement après un crash. Un owner
+      // vivant ou distant reste au contraire protégé indéfiniment. Un verrou
+      // legacy sans owner devient récupérable après une grâce de 30 s maximum.
+      if (localOwnerIsDead(staleRecoveryOwner)) {
+        if (!retireOwnedDirectory(recoveryPath, staleRecoveryOwner.token)) return null;
+      } else if (!retireOwnerlessDirectory(recoveryPath, observedAt, ownerlessGraceMs)) {
+        return null;
+      }
+    }
+    if (installOwnedDirectory(lockPath, owner)) {
+      return { name: leaseName, lockPath, owner };
+    }
+
+    {
+
+      const observedOwner = readJson(join(lockPath, 'owner.json'), null);
+      const observedOwnerDead = localOwnerIsDead(observedOwner);
+      const observedOwnerlessStale = !observedOwner
+        && ownerlessDirectoryIsStale(lockPath, observedAt, ownerlessGraceMs);
+      if (!observedOwnerDead && !observedOwnerlessStale) return null;
+
+      // Une seule instance peut récupérer un verrou expiré. Sans ce second
+      // verrou, deux processus pourraient supprimer le nouveau propriétaire
+      // entre l'observation de l'ancien verrou et sa mise en quarantaine.
+      const recoveryOwnerPath = join(recoveryPath, 'owner.json');
+      const recoveryOwner = {
+        host: hostname(),
+        pid: process.pid,
+        token,
+        acquiredAt: new Date(observedAt).toISOString(),
+      };
+      if (!installOwnedDirectory(recoveryPath, recoveryOwner)) {
+        const currentRecoveryOwner = readJson(recoveryOwnerPath, null);
+        if (localOwnerIsDead(currentRecoveryOwner)) {
+          if (!retireOwnedDirectory(recoveryPath, currentRecoveryOwner.token)) return null;
+        } else if (!retireOwnerlessDirectory(recoveryPath, observedAt, ownerlessGraceMs)) {
+          return null;
+        }
+        if (!installOwnedDirectory(recoveryPath, recoveryOwner)) return null;
+      }
+      let stalePath = null;
+      try {
+        if (!ownsDirectory(recoveryPath, recoveryOwner.token)) return null;
+        const currentOwner = readJson(join(lockPath, 'owner.json'), null);
+        const currentOwnerMatches = observedOwnerDead
+          ? currentOwner?.token === observedOwner.token && localOwnerIsDead(currentOwner)
+          : !currentOwner && ownerlessDirectoryIsStale(lockPath, observedAt, ownerlessGraceMs);
+        if (!currentOwnerMatches) return null;
+        stalePath = `${lockPath}.stale-${process.pid}-${token}`;
+        try {
+          renameSync(lockPath, stalePath);
+        } catch (renameError) {
+          if (renameError?.code === 'ENOENT') return null;
+          throw renameError;
+        }
+        const movedOwner = readJson(join(stalePath, 'owner.json'), null);
+        const movedOwnerMatches = observedOwnerDead
+          ? movedOwner?.token === observedOwner.token
+          : !movedOwner;
+        if (!movedOwnerMatches || !ownsDirectory(recoveryPath, recoveryOwner.token)) {
+          if (!existsSync(lockPath)) renameSync(stalePath, lockPath);
+          stalePath = null;
+          return null;
+        }
+        rmSync(stalePath, { recursive: true, force: true });
+        stalePath = null;
+        if (!ownsDirectory(recoveryPath, recoveryOwner.token)) return null;
+        if (!installOwnedDirectory(lockPath, owner)) return null;
+        return { name: leaseName, lockPath, owner };
+      } finally {
+        if (stalePath && existsSync(stalePath) && !existsSync(lockPath)) {
+          renameSync(stalePath, lockPath);
+        }
+        retireOwnedDirectory(recoveryPath, recoveryOwner.token);
+      }
+    }
   }
 
   releaseLease(lease) {
     if (!lease?.lockPath || !lease.lockPath.startsWith(this.locksDir)) throw new Error('Lease invalide');
-    rmSync(lease.lockPath, { recursive: true, force: true });
+    if (!existsSync(lease.lockPath)) return false;
+    if (!retireOwnedDirectory(lease.lockPath, lease.owner?.token)) {
+      throw new Error(`Lease ${lease.name || 'inconnue'} détenue par un autre processus`);
+    }
+    return true;
+  }
+
+  withExclusiveLock(name, callback, {
+    ttlMs = 30_000,
+    timeoutMs = 30_000,
+    retryDelayMs = 10,
+  } = {}) {
+    if (typeof callback !== 'function') throw new Error('Callback de verrou requis');
+    const startedAt = Date.now();
+    let lease = null;
+    do {
+      lease = this.acquireLease(name, { ttlMs });
+      if (lease) break;
+      if (Date.now() - startedAt >= timeoutMs) {
+        const error = new Error(`Délai dépassé pour le verrou ${name}`);
+        error.code = 'MEDIA_STATE_LOCK_TIMEOUT';
+        throw error;
+      }
+      sleepSync(Math.min(retryDelayMs, Math.max(1, timeoutMs - (Date.now() - startedAt))));
+    } while (!lease);
+
+    try {
+      const result = callback(lease);
+      if (result && typeof result.then === 'function') {
+        throw new Error('Le callback de verrou doit être synchrone');
+      }
+      return result;
+    } finally {
+      this.releaseLease(lease);
+    }
   }
 }

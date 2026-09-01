@@ -1,4 +1,4 @@
-export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-single-v3-qa';
+export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-single-v4-independent-qa';
 
 export const ARTICLE_THUMBNAIL_PROFILES = Object.freeze({
   chaimbault: Object.freeze({
@@ -37,13 +37,20 @@ export function articleThumbnailProfile(media) {
   return ARTICLE_THUMBNAIL_PROFILES[media?.slug] || ARTICLE_THUMBNAIL_PROFILES.chaimbault;
 }
 
-export function officialThumbnailAssets(draft) {
-  return (draft?.bannerBrief?.officialAssets || [])
-    .map((asset) => (typeof asset === 'string' ? { url: asset, kind: 'other' } : asset))
-    .filter((asset) => /^https:\/\//u.test(String(asset?.url || '')))
-    .map((asset) => ({
-      url: String(asset.url),
-      kind: ['logo', 'interface', 'face', 'other'].includes(asset.kind) ? asset.kind : 'other',
-      label: String(asset.label || '').trim() || null,
-    }));
+// Deliberately empty until an asset has been verified outside the generated
+// editorial draft. Future entries must be code-reviewed records containing a
+// stable URL, an official provenance and the SHA-256 of the downloaded bytes.
+// A model-provided `bannerBrief.officialAssets` value is never an authority.
+export const OFFICIAL_THUMBNAIL_ASSET_ALLOWLIST = Object.freeze({
+  chaimbault: Object.freeze([]),
+  'tesla-tech': Object.freeze([]),
+  affiliation: Object.freeze([]),
+  logiciels: Object.freeze([]),
+  investissement: Object.freeze([]),
+  entreprise: Object.freeze([]),
+});
+
+export function officialThumbnailAssets(mediaOrDraft) {
+  const slug = String(mediaOrDraft?.mediaSlug || mediaOrDraft?.slug || '');
+  return [...(OFFICIAL_THUMBNAIL_ASSET_ALLOWLIST[slug] || [])];
 }

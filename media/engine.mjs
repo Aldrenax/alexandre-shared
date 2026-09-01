@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { getChannelFeed, getVideoInfo, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
@@ -35,6 +35,11 @@ import {
   promoteThumbnailCandidate,
   ThumbnailGenerationBudget,
 } from './thumbnail-generation.mjs';
+import {
+  thumbnailAttemptLedgerKey,
+  thumbnailRefreshQueueId,
+  thumbnailRefreshRetryDelayMinutes,
+} from './thumbnail-refresh.mjs';
 
 const X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657n;
 export const EVIDENCE_REVISION = 2;
@@ -340,6 +345,25 @@ export function transcriptBlockNeedsCaption(reason = '') {
 }
 
 export function videoDraftReceipt(draft, candidateId) {
+  if (draft?.thumbnailGeneration?.retryable) {
+    if (draft.thumbnailGeneration.retryOwner === 'thumbnail-refresh') {
+      return {
+        status: 'thumbnail-refresh-queued',
+        reason: `thumbnail-circuit-open:${draft.thumbnailGeneration.circuitReason || 'unknown'}`,
+        editorialRevision: EDITORIAL_REVISION,
+        candidateId,
+        thumbnailAttempts: Number(draft.thumbnailGeneration.attemptCount || 0),
+      };
+    }
+    return {
+      status: 'retryable-failure',
+      reason: `thumbnail-circuit-open:${draft.thumbnailGeneration.circuitReason || 'unknown'}`,
+      nextRetryAt: draft.thumbnailGeneration.nextRetryAt || retryAt(1),
+      editorialRevision: EDITORIAL_REVISION,
+      candidateId,
+      thumbnailAttempts: Number(draft.thumbnailGeneration.attemptCount || 0),
+    };
+  }
   if (draft?.qa?.passed) {
     return { status: 'qa-passed', editorialRevision: EDITORIAL_REVISION, candidateId };
   }
@@ -703,7 +727,7 @@ export class MediaEngine {
     this.getVideoInfo = getVideoInfoImpl;
     this.enrichCandidateEvidence = enrichCandidateEvidenceImpl;
     this.env = env;
-    this.thumbnailBudget = thumbnailBudget || ThumbnailGenerationBudget.fromEnvironment(env);
+    this.thumbnailBudget = thumbnailBudget || ThumbnailGenerationBudget.fromEnvironment(env, { stateStore: store });
   }
 
   validate() {
@@ -907,9 +931,23 @@ export class MediaEngine {
     const media = mediaBySlug(candidate.mediaSlug);
     if (!media?.editorialEnabled) throw new Error(`Média non actif: ${candidate.mediaSlug}`);
     if (candidate.status !== 'qualified') throw new Error(`Candidat non qualifié: ${candidate.id}`);
+    const mediaDrafts = this.store.listDrafts(media.slug);
+    const refreshQueuePaths = new Set(this.store.listQueueEntries('thumbnail-refresh')
+      .map((entry) => entry.payload?.draftPath)
+      .filter(Boolean));
+    const refreshOwnedDraft = mediaDrafts.find(({ path, draft }) => draft?.candidateId === candidate.id
+      && draft?.contentType === contentType
+      && refreshQueuePaths.has(path));
+    if (refreshOwnedDraft) {
+      return {
+        status: 'blocked',
+        reason: 'thumbnail-refresh-queued',
+        duplicateDraftPath: refreshOwnedDraft.path,
+      };
+    }
     const draftConflict = findDraftConflict(
       candidate,
-      this.store.listDrafts(media.slug).map((entry) => ({ ...entry.draft, draftPath: entry.path })),
+      mediaDrafts.map((entry) => ({ ...entry.draft, draftPath: entry.path })),
       { mediaSlug: media.slug, contentType },
     );
     if (draftConflict) {
@@ -926,6 +964,25 @@ export class MediaEngine {
         reason: 'already-published-or-similar',
         publishedPath: publishedConflict.path,
       };
+    }
+    if (generateBanner && contentType !== 'video') {
+      const thumbnailPermit = this.thumbnailBudget.canAttempt();
+      if (!thumbnailPermit.allowed) {
+        return {
+          status: 'deferred',
+          reason: 'thumbnail-circuit-open',
+          candidateId: candidate.id,
+          mediaSlug: media.slug,
+          contentType,
+          thumbnailGeneration: {
+            status: 'deferred',
+            retryable: true,
+            circuitReason: thumbnailPermit.reason,
+            nextRetryAt: thumbnailPermit.nextRetryAt || this.thumbnailBudget.snapshot().nextRetryAt,
+            attemptCount: 0,
+          },
+        };
+      }
     }
     const prompt = buildEditorialPrompt({
       media,
@@ -981,8 +1038,18 @@ export class MediaEngine {
     };
 
     if (generateBanner && contentType !== 'video') {
+      const maximumThumbnailAttempts = positiveInteger(
+        this.env.MEDIA_ENGINE_THUMBNAIL_MAX_TOTAL_ATTEMPTS_PER_ITEM,
+        9,
+      );
       const bannerPath = join(this.store.assetsDir, media.slug, `${draft.slug}.webp`);
-      const candidateRoot = join(this.store.runtimeDir, 'thumbnail-candidates', media.slug, draft.slug);
+      const candidateRoot = join(
+        this.store.runtimeDir,
+        'thumbnail-candidates',
+        media.slug,
+        draft.slug,
+        randomUUID(),
+      );
       const thumbnail = await generateThumbnailWithQa({
         hermes: this.hermes,
         media,
@@ -990,7 +1057,22 @@ export class MediaEngine {
         materialize: (imageSource, path) => materializeBanner(imageSource, path, this.fetchImpl),
         candidatePathForAttempt: (attempt) => join(candidateRoot, `attempt-${attempt}.webp`),
         budget: this.thumbnailBudget,
-        maxAttempts: Number(this.env.MEDIA_ENGINE_THUMBNAIL_MAX_ATTEMPTS_PER_ITEM || 3),
+        attemptLedger: {
+          store: this.store,
+          key: thumbnailAttemptLedgerKey({
+            mediaSlug: media.slug,
+            contentType,
+            candidateId: candidate.id,
+            slug: draft.slug,
+          }),
+          minimumAttempts: 0,
+          maximumAttempts: maximumThumbnailAttempts,
+          scope: 'initial-generation',
+        },
+        maxAttempts: Math.min(
+          positiveInteger(this.env.MEDIA_ENGINE_THUMBNAIL_MAX_ATTEMPTS_PER_ITEM, 3),
+          maximumThumbnailAttempts,
+        ),
       });
       let promoted = { finalPath: thumbnail.path || join(candidateRoot, 'rejected.webp'), backupPath: null };
       if (thumbnail.passed) {
@@ -1011,6 +1093,14 @@ export class MediaEngine {
         } : thumbnail.qa,
         attempts: thumbnail.attempts,
         backupPath: promoted.backupPath,
+      };
+      draft.thumbnailGeneration = {
+        status: thumbnail.passed ? 'passed' : thumbnail.retryable ? 'deferred' : 'qa-failed',
+        retryable: thumbnail.retryable === true,
+        circuitReason: thumbnail.circuitReason || null,
+        nextRetryAt: thumbnail.nextRetryAt || null,
+        attemptCount: thumbnail.itemAttempts ?? thumbnail.attempts.length,
+        retryOwner: thumbnail.passed ? null : 'thumbnail-refresh',
       };
     } else if (contentType === 'video' && video?.thumbnailPath) {
       draft.banner = {
@@ -1033,7 +1123,41 @@ export class MediaEngine {
         reason: qa.passed ? publicationEligibility?.reason || null : 'qa-failed',
       },
     };
-    const draftPath = this.store.saveDraft(media.slug, draft);
+    const draftPath = this.store.draftPath(media.slug, draft);
+    // Le brouillon doit exister avant de rendre son retry visible au timer.
+    // Si le processus tombe entre ces deux écritures, le candidat n'est pas
+    // encore marqué comme traité et sera repris au cycle éditorial suivant.
+    // L'ordre inverse exposerait immédiatement une file orpheline au worker.
+    this.store.saveDraft(media.slug, draft);
+    if (['qa-failed', 'deferred'].includes(draft.thumbnailGeneration?.status)) {
+      const attempts = Number(draft.thumbnailGeneration.attemptCount || 0);
+      const maximumAttempts = positiveInteger(this.env.MEDIA_ENGINE_THUMBNAIL_MAX_TOTAL_ATTEMPTS_PER_ITEM, 9);
+      const exhausted = attempts >= maximumAttempts;
+      const queuedAt = new Date();
+      const refreshId = thumbnailRefreshQueueId(draft);
+      this.store.enqueue('thumbnail-refresh', refreshId, {
+        version: 1,
+        queueId: refreshId,
+        mediaSlug: draft.mediaSlug,
+        contentType: draft.contentType,
+        slug: draft.slug,
+        title: draft.title,
+        draftPath,
+        status: exhausted ? 'quarantined' : 'retry-scheduled',
+        queuedAt: queuedAt.toISOString(),
+        updatedAt: queuedAt.toISOString(),
+        attempts,
+        attemptLog: draft.banner?.attempts || [],
+        nextAttemptAt: exhausted
+          ? null
+          : new Date(Math.max(
+            queuedAt.getTime() + thumbnailRefreshRetryDelayMinutes(attempts) * 60_000,
+            Date.parse(draft.thumbnailGeneration.nextRetryAt || '') || 0,
+          )).toISOString(),
+        qa: draft.banner?.qa || null,
+        circuitReason: draft.thumbnailGeneration.circuitReason || null,
+      });
+    }
     const publicationQueuePath = this.store.enqueuePublicationReady(draftPath, draft);
     const editorialEvent = {
       version: 1,
@@ -1051,12 +1175,15 @@ export class MediaEngine {
       qa,
     };
     this.store.enqueue('events', `${media.slug}-${candidate.id}-${contentType}`, editorialEvent);
+    const receipt = videoDraftReceipt(draft, candidate.id);
     this.store.markEvent(`draft:${media.slug}:${candidate.id}:${contentType}`, {
-      status: qa.passed ? 'qa-passed' : 'qa-failed',
-      editorialRevision: EDITORIAL_REVISION,
+      ...receipt,
       slug: draft.slug,
       draftPath,
     });
+    if (draft.thumbnailGeneration?.retryable) {
+      return { ...draft, status: 'deferred', reason: 'thumbnail-circuit-open', draftPath };
+    }
     return { ...draft, draftPath };
   }
 

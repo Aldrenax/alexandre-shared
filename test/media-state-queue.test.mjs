@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -79,4 +86,107 @@ test('files d\u2019\u00e9tat: un brouillon qualifi\u00e9 entre imm\u00e9diatemen
   assert.equal(entry.payload.qualificationProfile, 'fallback');
   assert.equal(entry.payload.queuedAt, now.toISOString());
   assert.equal(store.enqueuePublicationReady(draftPath, { ...draft, qa: { passed: false } }), null);
+});
+
+test('verrous d\u2019\u00e9tat: un PID local mort est repris imm\u00e9diatement sans attendre le TTL et reste token-safe', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-state-lease-owner-')));
+  const now = Date.now();
+  const first = store.acquireLease('owner-safe', { ttlMs: 1_000, now });
+  assert.ok(first);
+  writeFileSync(join(first.lockPath, 'owner.json'), `${JSON.stringify({
+    ...first.owner,
+    pid: 2_147_483_647,
+  })}\n`);
+  const second = store.acquireLease('owner-safe', { ttlMs: 1_000, now });
+  assert.ok(second);
+  assert.notEqual(second.owner.token, first.owner.token);
+  assert.throws(() => store.releaseLease(first), /d\u00e9tenue par un autre processus/);
+  assert.equal(store.acquireLease('owner-safe', { ttlMs: 1_000, now }), null);
+  assert.equal(store.releaseLease(second), true);
+});
+
+test('verrous d\u2019\u00e9tat: un owner vivant reste prot\u00e9 au-del\u00e0 du TTL', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-state-live-owner-')));
+  const now = Date.now();
+  const owner = store.acquireLease('live-owner', { ttlMs: 1_000, now });
+  utimesSync(owner.lockPath, new Date(now - 5_000), new Date(now - 5_000));
+  assert.equal(store.acquireLease('live-owner', { ttlMs: 1_000, now }), null);
+  assert.equal(store.releaseLease(owner), true);
+  const successor = store.acquireLease('live-owner', { ttlMs: 1_000, now });
+  assert.ok(successor);
+  assert.equal(store.releaseLease(successor), true);
+});
+
+test('verrous d\u2019\u00e9tat: un crash avant rename du lock ou du recovery ne laisse aucun blocage ownerless', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-state-candidate-crash-')));
+  store.initialize();
+  const lockPath = join(store.locksDir, 'candidate-crash.lock');
+  mkdirSync(`${lockPath}.candidate-dead-process-token`, { mode: 0o750 });
+  mkdirSync(`${lockPath}.recovery.candidate-dead-process-token`, { mode: 0o750 });
+  const lease = store.acquireLease('candidate-crash');
+  assert.ok(lease);
+  assert.equal(store.releaseLease(lease), true);
+});
+
+test('verrous d\u2019\u00e9tat: les locks legacy ownerless non vides sont prot\u00e9g\u00e9s pendant la gr\u00e2ce puis r\u00e9cup\u00e9r\u00e9s', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-state-ownerless-legacy-')));
+  store.initialize();
+  const now = Date.now();
+  const lockPath = join(store.locksDir, 'legacy-ownerless.lock');
+  mkdirSync(lockPath, { mode: 0o750 });
+  writeFileSync(join(lockPath, 'owner.json.crash.tmp'), 'incomplete', { mode: 0o640 });
+  assert.equal(store.acquireLease('legacy-ownerless', { ttlMs: 13 * 60 * 60_000, now }), null);
+  const recovered = store.acquireLease('legacy-ownerless', {
+    ttlMs: 13 * 60 * 60_000,
+    now: now + 31_000,
+  });
+  assert.ok(recovered);
+  assert.equal(store.releaseLease(recovered), true);
+});
+
+test('verrous d\u2019\u00e9tat: un recovery legacy ownerless non vide est repris apr\u00e8s la gr\u00e2ce', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-state-ownerless-recovery-')));
+  const now = Date.now();
+  const first = store.acquireLease('ownerless-recovery', { ttlMs: 13 * 60 * 60_000, now });
+  writeFileSync(join(first.lockPath, 'owner.json'), `${JSON.stringify({
+    ...first.owner,
+    pid: 2_147_483_647,
+  })}\n`);
+  const recoveryPath = `${first.lockPath}.recovery`;
+  mkdirSync(recoveryPath, { mode: 0o750 });
+  writeFileSync(join(recoveryPath, 'owner.json.crash.tmp'), 'incomplete', { mode: 0o640 });
+  assert.equal(store.acquireLease('ownerless-recovery', { ttlMs: 13 * 60 * 60_000, now }), null);
+  const recovered = store.acquireLease('ownerless-recovery', {
+    ttlMs: 13 * 60 * 60_000,
+    now: now + 31_000,
+  });
+  assert.ok(recovered);
+  assert.equal(existsSync(recoveryPath), false);
+  assert.equal(store.releaseLease(recovered), true);
+});
+
+test('verrous d\u2019\u00e9tat: une r\u00e9cup\u00e9ration abandonn\u00e9e et expir\u00e9e ne bloque pas le circuit', () => {
+  const store = new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-state-lease-recovery-')));
+  const now = Date.now();
+  const first = store.acquireLease('recovery-safe', { ttlMs: 1_000, now });
+  const recoveryPath = `${first.lockPath}.recovery`;
+  mkdirSync(recoveryPath, { mode: 0o750 });
+  writeFileSync(join(first.lockPath, 'owner.json'), `${JSON.stringify({
+    ...first.owner,
+    pid: 2_147_483_647,
+  })}\n`);
+  writeFileSync(join(recoveryPath, 'owner.json'), `${JSON.stringify({
+    host: first.owner.host,
+    pid: 2_147_483_647,
+    token: 'abandoned-recovery',
+  })}\n`);
+  const staleDate = new Date(now - 2_000);
+  utimesSync(first.lockPath, staleDate, staleDate);
+  utimesSync(recoveryPath, staleDate, staleDate);
+
+  const recovered = store.acquireLease('recovery-safe', { ttlMs: 1_000, now });
+  assert.ok(recovered);
+  assert.equal(existsSync(recoveryPath), false);
+  assert.throws(() => store.releaseLease(first), /d\u00e9tenue par un autre processus/);
+  assert.equal(store.releaseLease(recovered), true);
 });
