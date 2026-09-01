@@ -68,6 +68,16 @@ test('registre: huit chaînes, six médias éditoriaux et sources officielles', 
   assert.equal(mediaBySlug('askoptimize').editorialEnabled, false);
 });
 
+test('registre: le profil SEC exige un CIK et une liste de formulaires explicites', () => {
+  const sources = MEDIA_SOURCES.map((source) => source.id === 'tesla-sec-filings'
+    ? { ...source, apiCik: '', apiForms: [] }
+    : source);
+  const errors = validateRegistry({ media: MEDIA_NETWORK, sources });
+
+  assert.ok(errors.includes('source.apiCik invalide pour tesla-sec-filings'));
+  assert.ok(errors.includes('source.apiForms vide pour tesla-sec-filings'));
+});
+
 test('miniature article: adaptation image unique de youtube-thumbnail-imagegen et DA par chaîne', () => {
   const media = mediaBySlug('investissement');
   const draft = {

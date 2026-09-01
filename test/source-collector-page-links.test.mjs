@@ -214,3 +214,163 @@ test('collecteur API NHTSA: les dates jour-mois sont interprétées sans ambigu�
   assert.equal(collected.items[0].publishedAt, '2025-01-07T00:00:00.000Z');
   assert.equal(collected.items[1].publishedAt, '2026-05-19T00:00:00.000Z');
 });
+
+test('registre sources Tesla: garde des sondes lentes et ajoute trois fallbacks officiels', () => {
+  const ids = new Set(MEDIA_SOURCES.filter((source) => source.media.includes('tesla-tech')).map((source) => source.id));
+
+  for (const id of ['tesla-ir', 'tesla-learn', 'tesla-release-notes']) {
+    const source = MEDIA_SOURCES.find((entry) => entry.id === id);
+    assert.equal(ids.has(id), true);
+    assert.equal(source.required, false);
+    assert.equal(source.quarantineAfterFailures, 1);
+    assert.equal(source.quarantineRetryHours, 24);
+  }
+  assert.equal(ids.has('tesla-youtube'), true);
+  assert.equal(ids.has('tesla-sec-filings'), true);
+  assert.equal(ids.has('rappelconso-tesla'), true);
+  for (const id of ['tesla-youtube', 'tesla-sec-filings', 'rappelconso-tesla']) {
+    const source = MEDIA_SOURCES.find((entry) => entry.id === id);
+    assert.equal(source.official, true);
+    assert.ok(source.tier <= 1);
+    assert.equal(source.required, false);
+  }
+  assert.match(MEDIA_SOURCES.find((source) => source.id === 'tesla-youtube').url, /UC5WjFrtBdufl6CZojX3D8dQ/);
+  assert.equal(MEDIA_SOURCES.find((source) => source.id === 'tesla-youtube').itemTitlePrefix, 'Tesla —');
+  assert.equal(MEDIA_SOURCES.find((source) => source.id === 'tesla-sec-filings').apiProfile, 'sec-company-submissions');
+  assert.equal(MEDIA_SOURCES.find((source) => source.id === 'rappelconso-tesla').url, 'https://rappel.conso.gouv.fr/rss?q=tesla');
+});
+
+test('collecteur Tesla bloqué: la sonde 403 passe immédiatement en quarantaine quotidienne', async () => {
+  const source = MEDIA_SOURCES.find((entry) => entry.id === 'tesla-ir');
+  const result = await collectSource(source, {
+    fetchImpl: async () => ({
+      ok: false, status: 403, url: source.url,
+      headers: new Headers(), text: async () => '',
+    }),
+    now: new Date('2026-09-01T08:00:00.000Z'),
+  });
+
+  assert.equal(result.status, 'quarantined');
+  assert.equal(result.consecutiveFailures, 1);
+  assert.equal(result.nextRetryAt, '2026-09-02T08:00:00.000Z');
+});
+
+test('collecteur RSS Tesla: ajoute le contexte officiel sans doubler un titre déjà préfixé', async () => {
+  const source = MEDIA_SOURCES.find((entry) => entry.id === 'tesla-youtube');
+  const response = {
+    ok: true,
+    status: 200,
+    url: source.url,
+    headers: new Headers({ 'content-type': 'application/atom+xml' }),
+    text: async () => `<?xml version="1.0" encoding="UTF-8"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+        <title>Tesla</title>
+        <entry><id>one</id><title>Pet Mode keeps your dog chillin’</title><link href="https://www.youtube.com/watch?v=one"/><published>2026-09-01T07:00:00Z</published></entry>
+        <entry><id>two</id><title>Tesla Cathode Factory</title><link href="https://www.youtube.com/watch?v=two"/><published>2026-09-01T06:00:00Z</published></entry>
+      </feed>`,
+  };
+
+  const collected = await collectSource(source, { fetchImpl: async () => response });
+
+  assert.deepEqual(collected.items.map((item) => item.title), [
+    'Tesla — Pet Mode keeps your dog chillin’',
+    'Tesla Cathode Factory',
+  ]);
+});
+
+test('collecteur SEC Tesla: transforme seulement les formulaires autorisés en preuves officielles', async () => {
+  const source = MEDIA_SOURCES.find((entry) => entry.id === 'tesla-sec-filings');
+  const response = {
+    ok: true,
+    status: 200,
+    url: source.url,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    text: async () => JSON.stringify({
+      cik: '0001318605',
+      name: 'Tesla, Inc.',
+      filings: { recent: {
+        accessionNumber: ['0001628280-26-049270', '0001104659-26-075213', '../../invalide'],
+        filingDate: ['2026-07-23', '2026-06-17', '2026-06-01'],
+        reportDate: ['2026-06-30', '2026-06-16', ''],
+        acceptanceDateTime: ['2026-07-23T01:02:31.000Z', '2026-06-17T21:00:37.000Z', '2026-06-01T00:00:00.000Z'],
+        form: ['10-Q', '4', '8-K'],
+        items: ['', '', '2.02'],
+        primaryDocument: ['tsla-20260630.htm', 'xslF345X06/tm2618092-2_4seq1.xml', '../escape.htm'],
+      } },
+    }),
+  };
+
+  const collected = await collectSource(source, { fetchImpl: async () => response });
+
+  assert.equal(collected.status, 'healthy');
+  assert.equal(collected.items.length, 1);
+  assert.equal(collected.items[0].id, '0001628280-26-049270');
+  assert.equal(collected.items[0].sourceOfficial, true);
+  assert.equal(collected.items[0].kind, 'official-api');
+  assert.equal(collected.items[0].publishedAt, '2026-07-23T01:02:31.000Z');
+  assert.equal(collected.items[0].url, 'https://www.sec.gov/Archives/edgar/data/1318605/000162828026049270/tsla-20260630.htm');
+  assert.match(collected.items[0].title, /Tesla.*10-Q/);
+  assert.match(collected.items[0].title, /2026-07-23/);
+});
+
+test('collecteur: diagnostique un HTTP 403 et espace les essais après quarantaine', async () => {
+  const source = {
+    id: 'blocked-official', name: 'Source officielle', type: 'page',
+    url: 'https://official.example/blocked', tier: 1, official: true, media: ['tesla-tech'],
+  };
+  let fetchCount = 0;
+  const forbidden = {
+    ok: false, status: 403, url: source.url,
+    headers: new Headers(), text: async () => '',
+  };
+  const quarantined = await collectSource(source, {
+    previous: { consecutiveFailures: 2, lastOkAt: '2026-08-01T00:00:00.000Z' },
+    fetchImpl: async () => { fetchCount += 1; return forbidden; },
+    now: new Date('2026-09-01T08:00:00.000Z'),
+  });
+
+  assert.equal(quarantined.status, 'quarantined');
+  assert.equal(quarantined.errorKind, 'http-forbidden');
+  assert.equal(quarantined.httpStatus, 403);
+  assert.equal(quarantined.attemptedUrl, source.url);
+  assert.equal(quarantined.quarantinedAt, '2026-09-01T08:00:00.000Z');
+  assert.equal(quarantined.nextRetryAt, '2026-09-01T20:00:00.000Z');
+  assert.match(quarantined.diagnostic, /sans contourner/);
+
+  const deferred = await collectSource(source, {
+    previous: quarantined,
+    fetchImpl: async () => { fetchCount += 1; return forbidden; },
+    now: new Date('2026-09-01T09:00:00.000Z'),
+  });
+  assert.equal(fetchCount, 1);
+  assert.equal(deferred.status, 'quarantined');
+  assert.equal(deferred.skipped, true);
+  assert.equal(deferred.skipReason, 'quarantine-backoff');
+  assert.equal(deferred.lastAttemptAt, '2026-09-01T08:00:00.000Z');
+});
+
+test('collecteur: retente une source quarantainée après temporisation et réinitialise son état', async () => {
+  const source = {
+    id: 'recovered-official', name: 'Source officielle', type: 'page', pageMode: 'reference',
+    url: 'https://official.example/recovered', tier: 1, official: true, media: ['tesla-tech'],
+  };
+  const response = {
+    ok: true, status: 200, url: source.url,
+    headers: new Headers({ 'content-type': 'text/html' }), text: async () => '<html><title>Source rétablie</title></html>',
+  };
+  const recovered = await collectSource(source, {
+    previous: {
+      status: 'quarantined', consecutiveFailures: 3,
+      nextRetryAt: '2026-09-01T08:00:00.000Z',
+      errorKind: 'http-forbidden', httpStatus: 403,
+    },
+    fetchImpl: async () => response,
+    now: new Date('2026-09-01T08:01:00.000Z'),
+  });
+
+  assert.equal(recovered.status, 'healthy');
+  assert.equal(recovered.consecutiveFailures, 0);
+  assert.equal(recovered.httpStatus, 200);
+  assert.equal(recovered.lastAttemptAt, '2026-09-01T08:01:00.000Z');
+  assert.equal(recovered.errorKind, undefined);
+});

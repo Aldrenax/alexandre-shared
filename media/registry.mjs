@@ -5,6 +5,7 @@ import {
 } from '../config/media-network.mjs';
 
 const SOURCE_TYPES = new Set(['rss', 'api', 'page', 'x']);
+const API_PROFILES = new Set(['sec-company-submissions']);
 const PAGE_MODES = new Set(['document', 'links', 'reference']);
 const PAGE_DATE_MODES = new Set(['published', 'modified']);
 const RISK_LEVELS = new Set([
@@ -47,6 +48,20 @@ export function validateRegistry({ media = MEDIA_NETWORK, sources = MEDIA_SOURCE
   for (const source of sources || []) {
     if (!source?.id || sourceIds.has(source.id)) errors.push(`source.id invalide ou dupliqué: ${source?.id}`);
     if (!SOURCE_TYPES.has(source?.type)) errors.push(`source.type invalide pour ${source?.id}: ${source?.type}`);
+    if (source?.apiProfile && source.type !== 'api') errors.push(`source.apiProfile réservé aux API pour ${source?.id}`);
+    if (source?.apiProfile && !API_PROFILES.has(source.apiProfile)) errors.push(`source.apiProfile invalide pour ${source?.id}: ${source.apiProfile}`);
+    if (source?.apiProfile === 'sec-company-submissions') {
+      if (!/^\d+$/.test(String(source.apiCik || ''))) errors.push(`source.apiCik invalide pour ${source?.id}`);
+      if (!Array.isArray(source.apiForms) || source.apiForms.length === 0) errors.push(`source.apiForms vide pour ${source?.id}`);
+    }
+    if (source?.quarantineAfterFailures != null
+      && (!Number.isInteger(source.quarantineAfterFailures) || source.quarantineAfterFailures < 1)) {
+      errors.push(`source.quarantineAfterFailures invalide pour ${source?.id}`);
+    }
+    if (source?.quarantineRetryHours != null
+      && (!Number.isFinite(source.quarantineRetryHours) || source.quarantineRetryHours <= 0)) {
+      errors.push(`source.quarantineRetryHours invalide pour ${source?.id}`);
+    }
     if (source?.type === 'page' && source.pageMode && !PAGE_MODES.has(source.pageMode)) errors.push(`source.pageMode invalide pour ${source?.id}: ${source.pageMode}`);
     if (source?.type === 'page' && source.pageDateMode && !PAGE_DATE_MODES.has(source.pageDateMode)) errors.push(`source.pageDateMode invalide pour ${source?.id}: ${source.pageDateMode}`);
     if (!Number.isInteger(source?.tier) || source.tier < 0 || source.tier > 4) errors.push(`source.tier invalide pour ${source?.id}`);

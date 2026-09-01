@@ -2,6 +2,103 @@ import { createHash } from 'node:crypto';
 
 const USER_AGENT = 'AlexandreMediaEngine/0.3 (+https://alexandrechaimbault.com)';
 
+class SourceHttpError extends Error {
+  constructor(status, url) {
+    super(`HTTP ${status}`);
+    this.name = 'SourceHttpError';
+    this.status = Number(status);
+    this.url = url;
+  }
+}
+
+function failureDetails(error) {
+  const status = Number(error?.status);
+  if (Number.isInteger(status)) {
+    if ([401, 403].includes(status)) {
+      return {
+        kind: 'http-forbidden',
+        status,
+        diagnostic: `Accès refusé par la source (HTTP ${status}). Utiliser un flux ou une API officielle accessible, sans contourner la protection.`,
+      };
+    }
+    if (status === 429) {
+      return {
+        kind: 'http-rate-limited',
+        status,
+        diagnostic: 'Limite de requêtes atteinte (HTTP 429). La source sera retentée après temporisation.',
+      };
+    }
+    if (status >= 500) {
+      return {
+        kind: 'http-server',
+        status,
+        diagnostic: `La source officielle est indisponible côté serveur (HTTP ${status}).`,
+      };
+    }
+    return {
+      kind: 'http-client',
+      status,
+      diagnostic: `La source a rejeté la requête (HTTP ${status}). Vérifier l'URL et le contrat du flux.`,
+    };
+  }
+  if (error?.sourceStage === 'parse') {
+    return {
+      kind: 'parse',
+      status: null,
+      diagnostic: 'La réponse a été reçue mais son format ne correspond plus au parseur attendu.',
+    };
+  }
+  if (['AbortError', 'TimeoutError'].includes(error?.name) || /timed?\s*out|timeout/i.test(String(error?.message || ''))) {
+    return {
+      kind: 'timeout',
+      status: null,
+      diagnostic: 'La source n’a pas répondu avant l’expiration du délai.',
+    };
+  }
+  return {
+    kind: 'network',
+    status: null,
+    diagnostic: 'La collecte a échoué avant l’obtention d’une réponse exploitable.',
+  };
+}
+
+function quarantineRetryHours(source, kind) {
+  const configured = Number(source.quarantineRetryHours);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  if (kind === 'http-forbidden') return 12;
+  if (kind === 'http-rate-limited') return 2;
+  return 1;
+}
+
+function deferredQuarantineResult(source, previous, now) {
+  if (previous.status !== 'quarantined') return null;
+  const nextRetryAt = Date.parse(previous.nextRetryAt || '');
+  if (!Number.isFinite(nextRetryAt) || nextRetryAt <= now.getTime()) return null;
+  const checkedAt = now.toISOString();
+  return {
+    sourceId: source.id,
+    required: source.required !== false,
+    status: 'quarantined',
+    checkedAt,
+    lastAttemptAt: previous.lastAttemptAt || previous.checkedAt || null,
+    lastOkAt: previous.lastOkAt || null,
+    consecutiveFailures: Number(previous.consecutiveFailures || 0),
+    etag: previous.etag || null,
+    lastModified: previous.lastModified || null,
+    contentHash: previous.contentHash || null,
+    error: previous.error || null,
+    errorKind: previous.errorKind || null,
+    httpStatus: previous.httpStatus ?? null,
+    attemptedUrl: previous.attemptedUrl || source.url,
+    diagnostic: previous.diagnostic || null,
+    quarantinedAt: previous.quarantinedAt || previous.checkedAt || null,
+    nextRetryAt: previous.nextRetryAt,
+    skipped: true,
+    skipReason: 'quarantine-backoff',
+    items: [],
+  };
+}
+
 function digest(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
 }
@@ -163,19 +260,32 @@ async function parseRss(text, source) {
   }
   const parser = new RssParser({ timeout: 15_000 });
   const feed = await parser.parseString(text);
-  return (feed.items || []).slice(0, 30).map((item) => ({
-    id: item.guid || item.id || item.link || digest(item.title),
-    sourceId: source.id,
-    sourceTier: source.tier,
-    sourceOfficial: source.official,
-    title: decodeHtml(item.title),
-    url: item.link || '',
-    excerpt: decodeHtml(item.contentSnippet || item.summary || item.content || '').slice(0, 1_200),
-    publishedAt: rssPublishedAt(item, source),
-    author: decodeHtml(item.creator || item.author || ''),
-    media: source.media,
-    kind: 'news',
-  })).filter((item) => item.title && item.url);
+  return (feed.items || []).slice(0, 30).map((item) => {
+    const rawTitle = decodeHtml(item.title);
+    const titlePrefix = decodeHtml(source.itemTitlePrefix || '');
+    const prefixIdentity = titlePrefix.replace(/[\s—:|-]+$/g, '').toLowerCase();
+    const normalizedTitle = rawTitle.toLowerCase();
+    const alreadyPrefixed = normalizedTitle === prefixIdentity
+      || normalizedTitle.startsWith(`${prefixIdentity} `)
+      || normalizedTitle.startsWith(`${prefixIdentity}:`)
+      || normalizedTitle.startsWith(`${prefixIdentity} —`);
+    const title = titlePrefix && !alreadyPrefixed
+      ? `${titlePrefix} ${rawTitle}`
+      : rawTitle;
+    return {
+      id: item.guid || item.id || item.link || digest(item.title),
+      sourceId: source.id,
+      sourceTier: source.tier,
+      sourceOfficial: source.official,
+      title,
+      url: item.link || '',
+      excerpt: decodeHtml(item.contentSnippet || item.summary || item.content || '').slice(0, 1_200),
+      publishedAt: rssPublishedAt(item, source),
+      author: decodeHtml(item.creator || item.author || ''),
+      media: source.media,
+      kind: 'news',
+    };
+  }).filter((item) => item.title && item.url);
 }
 
 function pageMetadata(html, source, previous = {}) {
@@ -275,6 +385,58 @@ export async function enrichCandidateEvidence(candidate, {
 }
 
 function apiItems(payload, source) {
+  if (source.apiProfile === 'sec-company-submissions') {
+    const recent = payload?.filings?.recent;
+    const accessionNumbers = recent?.accessionNumber;
+    if (!Array.isArray(accessionNumbers)) return [];
+    const acceptedForms = new Set(source.apiForms || ['8-K', '10-K', '10-Q', 'DEF 14A', 'SD']);
+    const cik = String(payload?.cik || source.apiCik || '').replace(/^0+/, '');
+    if (!/^\d+$/.test(cik)) return [];
+    const companyName = String(source.companyName || payload?.name || source.name).trim();
+    const items = [];
+    for (let index = 0; index < accessionNumbers.length && items.length < 50; index += 1) {
+      const accessionNumber = String(accessionNumbers[index] || '').trim();
+      const form = String(recent.form?.[index] || '').trim();
+      const primaryDocument = String(recent.primaryDocument?.[index] || '').trim();
+      if (!acceptedForms.has(form)
+        || !/^\d{10}-\d{2}-\d{6}$/.test(accessionNumber)
+        || !primaryDocument
+        || primaryDocument.includes('..')
+        || !/^[a-zA-Z0-9._/-]+$/.test(primaryDocument)) continue;
+      const filingDate = String(recent.filingDate?.[index] || '').trim();
+      const reportDate = String(recent.reportDate?.[index] || '').trim();
+      const filingItems = String(recent.items?.[index] || '').trim();
+      const archiveUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionNumber.replace(/-/g, '')}/${primaryDocument}`;
+      const details = [
+        `Formulaire ${form}`,
+        filingDate ? `déposé le ${filingDate}` : '',
+        reportDate ? `période de référence ${reportDate}` : '',
+        filingItems ? `rubriques ${filingItems}` : '',
+      ].filter(Boolean).join(', ');
+      items.push({
+        id: accessionNumber,
+        sourceId: source.id,
+        sourceTier: source.tier,
+        sourceOfficial: source.official,
+        title: `${companyName} publie un dépôt officiel ${form}${filingDate ? ` du ${filingDate}` : ''}`,
+        url: archiveUrl,
+        excerpt: `${details}.`,
+        publishedAt: validDate(recent.acceptanceDateTime?.[index] || filingDate),
+        author: source.name,
+        media: source.media,
+        kind: 'official-api',
+        raw: {
+          accessionNumber,
+          form,
+          filingDate,
+          reportDate,
+          items: filingItems,
+          primaryDocument,
+        },
+      });
+    }
+    return items;
+  }
   const values = Array.isArray(payload) ? payload : payload.results || payload.Results || payload.data || [];
   if (!Array.isArray(values)) return [];
   return values.slice(0, 50).map((item, index) => {
@@ -306,6 +468,8 @@ export async function collectSource(source, {
   now = new Date(),
 } = {}) {
   const startedAt = now.toISOString();
+  const deferred = deferredQuarantineResult(source, previous, now);
+  if (deferred) return deferred;
   try {
     const response = await fetchSource(source, previous, fetchImpl, timeoutMs);
     if (response.status === 304) {
@@ -315,28 +479,41 @@ export async function collectSource(source, {
         status: 'healthy',
         notModified: true,
         checkedAt: startedAt,
+        lastAttemptAt: startedAt,
         lastOkAt: startedAt,
         consecutiveFailures: 0,
         etag: previous.etag || null,
         lastModified: previous.lastModified || null,
         contentHash: previous.contentHash || null,
+        finalUrl: response.url || source.url,
+        httpStatus: 304,
         items: [],
       };
     }
-    if (!response.ok && !source.acceptedStatuses?.includes(response.status)) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok && !source.acceptedStatuses?.includes(response.status)) {
+      throw new SourceHttpError(response.status, response.url || source.url);
+    }
 
     const contentType = response.headers.get('content-type') || '';
     const text = await response.text();
     let items = [];
     let contentHash = digest(text);
     if (source.type === 'rss') {
-      items = await parseRss(text, source);
+      try {
+        items = await parseRss(text, source);
+      } catch (error) {
+        const parseError = error instanceof Error ? error : new Error(String(error));
+        parseError.sourceStage = 'parse';
+        throw parseError;
+      }
     } else if (source.type === 'api') {
       let payload;
       try {
         payload = JSON.parse(text);
-      } catch {
-        throw new Error(`réponse API non JSON (${contentType || 'content-type inconnu'})`);
+      } catch (error) {
+        const parseError = new Error(`réponse API non JSON (${contentType || 'content-type inconnu'})`, { cause: error });
+        parseError.sourceStage = 'parse';
+        throw parseError;
       }
       items = apiItems(payload, source);
     } else if (source.type === 'page') {
@@ -352,28 +529,48 @@ export async function collectSource(source, {
       required: source.required !== false,
       status: 'healthy',
       checkedAt: startedAt,
+      lastAttemptAt: startedAt,
       lastOkAt: startedAt,
       consecutiveFailures: 0,
       etag: response.headers.get('etag') || previous.etag || null,
       lastModified: response.headers.get('last-modified') || previous.lastModified || null,
       contentHash,
       finalUrl: response.url || source.url,
+      httpStatus: response.status,
       contentType,
       items,
     };
   } catch (error) {
     const consecutiveFailures = Number(previous.consecutiveFailures || 0) + 1;
+    const configuredThreshold = Number(source.quarantineAfterFailures);
+    const quarantineThreshold = Number.isInteger(configuredThreshold) && configuredThreshold > 0
+      ? configuredThreshold
+      : 3;
+    const status = consecutiveFailures >= quarantineThreshold ? 'quarantined' : 'degraded';
+    const details = failureDetails(error);
+    const nextRetryAt = status === 'quarantined'
+      ? new Date(now.getTime() + (quarantineRetryHours(source, details.kind) * 3_600_000)).toISOString()
+      : null;
     return {
       sourceId: source.id,
       required: source.required !== false,
-      status: consecutiveFailures >= 3 ? 'quarantined' : 'degraded',
+      status,
       checkedAt: startedAt,
+      lastAttemptAt: startedAt,
       lastOkAt: previous.lastOkAt || null,
       consecutiveFailures,
       etag: previous.etag || null,
       lastModified: previous.lastModified || null,
       contentHash: previous.contentHash || null,
       error: String(error?.message || error),
+      errorKind: details.kind,
+      httpStatus: details.status,
+      attemptedUrl: error?.url || source.url,
+      diagnostic: details.diagnostic,
+      quarantinedAt: status === 'quarantined'
+        ? previous.quarantinedAt || startedAt
+        : null,
+      nextRetryAt,
       items: [],
     };
   }

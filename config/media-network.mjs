@@ -224,9 +224,15 @@ export const MEDIA_SOURCES = Object.freeze([
   source({ id: 'maddyness', name: 'Maddyness', type: 'rss', url: 'https://www.maddyness.com/feed/', tier: 2, official: false, media: ['chaimbault', 'logiciels', 'entreprise'] }),
 
   // Tesla
-  source({ id: 'tesla-ir', name: 'Tesla Investor Relations', type: 'page', pageMode: 'links', required: false, url: 'https://ir.tesla.com/', tier: 1, official: true, media: ['tesla-tech'] }),
-  source({ id: 'tesla-learn', name: 'Tesla Learn', type: 'page', pageMode: 'reference', required: false, url: 'https://www.tesla.com/learn', tier: 1, official: true, media: ['tesla-tech'] }),
-  source({ id: 'tesla-release-notes', name: 'Tesla Software Release Notes', type: 'page', required: false, url: 'https://www.tesla.com/support/software-release-notes', tier: 1, official: true, media: ['tesla-tech'] }),
+  // Les pages tesla.com et ir.tesla.com refusent durablement le VPS (HTTP
+  // 403). Elles restent des sondes de récupération quotidiennes, sans
+  // contournement ; les flux officiels accessibles assurent la collecte utile.
+  source({ id: 'tesla-ir', name: 'Tesla Investor Relations', type: 'page', pageMode: 'links', required: false, quarantineAfterFailures: 1, quarantineRetryHours: 24, url: 'https://ir.tesla.com/', tier: 1, official: true, media: ['tesla-tech'] }),
+  source({ id: 'tesla-learn', name: 'Tesla Learn', type: 'page', pageMode: 'reference', required: false, quarantineAfterFailures: 1, quarantineRetryHours: 24, url: 'https://www.tesla.com/learn', tier: 1, official: true, media: ['tesla-tech'] }),
+  source({ id: 'tesla-release-notes', name: 'Tesla Software Release Notes', type: 'page', required: false, quarantineAfterFailures: 1, quarantineRetryHours: 24, url: 'https://www.tesla.com/support/software-release-notes', tier: 1, official: true, media: ['tesla-tech'] }),
+  source({ id: 'tesla-youtube', name: 'Tesla — chaîne YouTube officielle', type: 'rss', itemTitlePrefix: 'Tesla —', required: false, url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC5WjFrtBdufl6CZojX3D8dQ', tier: 1, official: true, media: ['tesla-tech'] }),
+  source({ id: 'tesla-sec-filings', name: 'Tesla — dépôts SEC', companyName: 'Tesla', type: 'api', apiProfile: 'sec-company-submissions', apiCik: '1318605', apiForms: ['8-K', '10-K', '10-Q', 'DEF 14A', 'SD'], required: false, url: 'https://data.sec.gov/submissions/CIK0001318605.json', tier: 0, official: true, media: ['tesla-tech'] }),
+  source({ id: 'rappelconso-tesla', name: 'RappelConso — Tesla', type: 'rss', required: false, url: 'https://rappel.conso.gouv.fr/rss?q=tesla', tier: 0, official: true, media: ['tesla-tech'] }),
   source({ id: 'nhtsa-recalls', name: 'NHTSA Recalls API', type: 'api', url: 'https://api.nhtsa.gov/recalls/recallsByVehicle?make=Tesla&model=Model%20Y&modelYear=2025', tier: 0, official: true, media: ['tesla-tech'] }),
   source({ id: 'electrek-tesla', name: 'Electrek Tesla', type: 'rss', url: 'https://electrek.co/guides/tesla/feed/', tier: 2, official: false, media: ['tesla-tech'] }),
   source({ id: 'teslarati', name: 'Teslarati', type: 'rss', url: 'https://www.teslarati.com/feed/', tier: 2, official: false, media: ['tesla-tech'] }),
