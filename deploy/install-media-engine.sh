@@ -34,9 +34,19 @@ install -d -m 0750 "$RELEASE_ROOT/releases" "$CONFIG_DIR" "$RUNTIME_DIR" /var/li
 git -C "$SOURCE_DIR" archive HEAD | tar -x -C "$RELEASE_DIR"
 /usr/bin/npm ci --omit=dev --ignore-scripts --prefix "$RELEASE_DIR"
 
+systemd_unit_autostarted() {
+  local enabled_state
+  enabled_state="$(systemctl is-enabled "$1" 2>/dev/null || true)"
+  case "$enabled_state" in
+    enabled|enabled-runtime|linked|linked-runtime) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Aucun fichier d'unité ni symlink ne change tant qu'une unité susceptible de
 # charger /opt/alexandre-media-engine/current est active. L'arrêt reste une
-# action de maintenance explicite; l'installeur se contente de refuser.
+# action de maintenance explicite; l'installeur se contente de refuser. Les
+# états systemd statiques/indirects ne sont pas des déclencheurs autonomes.
 for unit in \
   alexandre-media-network.timer alexandre-media-network.service \
   alexandre-media-video.timer alexandre-media-video.service \
@@ -46,7 +56,7 @@ for unit in \
   alexandre-media-publish.path alexandre-media-publish.timer alexandre-media-publish.service \
   alexandre-wordpress-draft.timer alexandre-wordpress-draft.service \
   alexandre-newsletter-shadow.service; do
-  if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then
+  if systemctl is-active --quiet "$unit" || systemd_unit_autostarted "$unit"; then
     echo "Installation refusée: $unit est actif ou activé au démarrage. Aucune unité ni release n'a été basculée." >&2
     exit 1
   fi

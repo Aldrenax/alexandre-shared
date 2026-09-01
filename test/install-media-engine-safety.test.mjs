@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
@@ -53,8 +54,32 @@ test('upgrade Media Engine: toutes les unités courantes doivent être inactives
     'alexandre-media-monitor.service',
     'alexandre-newsletter-shadow.service',
   ]) assert.match(installer, new RegExp(unit.replaceAll('.', '\\.'), 'u'));
-  assert.match(installer, /systemctl is-active --quiet "\$unit" \|\| systemctl is-enabled --quiet "\$unit"/u);
+  assert.match(installer, /systemctl is-active --quiet "\$unit" \|\| systemd_unit_autostarted "\$unit"/u);
   assert.doesNotMatch(installer, /systemctl\s+stop/u);
+});
+
+test('upgrade Media Engine: systemd static et indirect ne sont pas confondus avec un autostart', () => {
+  const start = installer.indexOf('systemd_unit_autostarted() {');
+  const end = installer.indexOf('\n}\n', start);
+  assert.ok(start >= 0 && end > start, 'helper systemd absent');
+  const helper = installer.slice(start, end + 3);
+  for (const [state, expected] of [
+    ['enabled', 0],
+    ['enabled-runtime', 0],
+    ['linked', 0],
+    ['linked-runtime', 0],
+    ['static', 1],
+    ['indirect', 1],
+    ['disabled', 1],
+    ['', 1],
+  ]) {
+    const script = `${helper}\nsystemctl() { printf '%s\\n' "$STATE"; }\nsystemd_unit_autostarted example.service`;
+    const result = spawnSync('/bin/bash', ['-c', script], {
+      env: { ...process.env, STATE: state },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, expected, `état systemd ${state || '(vide)'}`);
+  }
 });
 
 test('activation shadow: le vrai canari Hermes vision précède et conditionne tous les timers', () => {
