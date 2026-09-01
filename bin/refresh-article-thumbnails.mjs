@@ -21,7 +21,7 @@ import {
   thumbnailRefreshExitCode,
   thumbnailRefreshQueueId,
   thumbnailRefreshRetryDelayMinutes,
-  thumbnailRefreshSelection,
+  requestedThumbnailRefreshEntries,
   reconcileThumbnailQueues,
 } from '../media/thumbnail-refresh.mjs';
 
@@ -59,6 +59,11 @@ const apply = process.argv.includes('--apply');
 const scheduled = process.argv.includes('--scheduled');
 const newsOnly = process.argv.includes('--news-only');
 const mediaSlug = argument('--media');
+const draftSelectorPresent = process.argv.includes('--draft');
+const requestedDraftPath = argument('--draft');
+if (draftSelectorPresent && (!requestedDraftPath || requestedDraftPath.startsWith('--'))) {
+  throw new Error('--draft requiert un chemin de brouillon');
+}
 if (process.argv.includes('--limit')) {
   throw new Error('--limit a été supprimé: tous les contenus sont sélectionnés; utilisez --budget pour borner les tentatives globales');
 }
@@ -95,7 +100,10 @@ const recoveredTransitions = apply
   : [];
 const queueById = new Map(engine.store.listQueueEntries('thumbnail-refresh')
   .map((entry) => [entry.payload?.queueId, entry.payload]));
-const refreshableEntries = thumbnailRefreshSelection(engine.store.listDrafts(mediaSlug))
+const refreshableEntries = requestedThumbnailRefreshEntries(
+  engine.store.listDrafts(mediaSlug),
+  draftSelectorPresent ? requestedDraftPath : null,
+)
   .filter(({ draft }) => draft?.banner?.qa?.policy !== ARTICLE_THUMBNAIL_POLICY || draft?.banner?.qa?.passed !== true)
   .filter(({ draft }) => !newsOnly || draft?.contentType === 'news');
 const entries = dueThumbnailRefreshEntries(refreshableEntries, {

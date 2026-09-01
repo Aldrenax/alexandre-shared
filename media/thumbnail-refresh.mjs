@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { ARTICLE_THUMBNAIL_POLICY } from './editorial.mjs';
 import { qaDraft } from './qa.mjs';
 import { writeJsonAtomic } from './state-store.mjs';
@@ -31,6 +31,24 @@ export function refreshableThumbnailDrafts(entries) {
 
 export function thumbnailRefreshSelection(entries) {
   return refreshableThumbnailDrafts(entries);
+}
+
+export function requestedThumbnailRefreshEntries(entries, requestedPath = null) {
+  const selected = thumbnailRefreshSelection(entries);
+  if (requestedPath === null || requestedPath === undefined) return selected;
+
+  const normalizedRequestedPath = String(requestedPath).trim();
+  if (!normalizedRequestedPath) {
+    throw new Error('--draft requiert un chemin de brouillon');
+  }
+  const resolvedRequestedPath = resolve(normalizedRequestedPath);
+  const matches = selected.filter(({ path }) => (
+    typeof path === 'string' && resolve(path) === resolvedRequestedPath
+  ));
+  if (matches.length !== 1) {
+    throw new Error('Brouillon miniature demandé introuvable dans les brouillons rafraîchissables');
+  }
+  return matches;
 }
 
 // Compatibilité d'import: la sélection n'est plus tronquée par une taille de

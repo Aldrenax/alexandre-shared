@@ -11,6 +11,7 @@ import {
   reconciledThumbnailDraft,
   reconcileThumbnailQueues,
   refreshableThumbnailDrafts,
+  requestedThumbnailRefreshEntries,
   representativeThumbnailBatch,
   thumbnailRefreshAttemptState,
   thumbnailRefreshExitCode,
@@ -38,6 +39,45 @@ test('thumbnail refresh: tous les contenus éligibles sont sélectionnés sans p
   assert.deepEqual(
     representativeThumbnailBatch(entries, { limit: 1 }).map((item) => item.path),
     ['/d/chaimbault-a.json', '/d/chaimbault-b.json', '/d/tesla-a.json'],
+  );
+});
+
+test('thumbnail refresh: --draft sélectionne exactement un brouillon rafraîchissable connu', () => {
+  const entries = [
+    entry('/d/chaimbault-b.json', 'chaimbault', 'news'),
+    entry('/d/chaimbault-a.json', 'chaimbault', 'guide'),
+    entry('/d/tesla-a.json', 'tesla-tech', 'news'),
+  ];
+  assert.deepEqual(
+    requestedThumbnailRefreshEntries(entries, '/d/chaimbault-b.json').map((item) => item.path),
+    ['/d/chaimbault-b.json'],
+  );
+});
+
+test('thumbnail refresh: --draft refuse un chemin absent ou non rafraîchissable', () => {
+  const entries = [
+    entry('/d/news.json', 'chaimbault', 'news'),
+    entry('/d/video.json', 'chaimbault', 'video'),
+  ];
+  assert.throws(
+    () => requestedThumbnailRefreshEntries(entries, '/d/absent.json'),
+    /introuvable dans les brouillons rafraîchissables/,
+  );
+  assert.throws(
+    () => requestedThumbnailRefreshEntries(entries, '/d/video.json'),
+    /introuvable dans les brouillons rafraîchissables/,
+  );
+});
+
+test('thumbnail refresh: sans --draft la sélection complète reste inchangée', () => {
+  const entries = [
+    entry('/d/news-b.json', 'chaimbault', 'news'),
+    entry('/d/news-a.json', 'tesla-tech', 'news'),
+    entry('/d/video.json', 'logiciels', 'video'),
+  ];
+  assert.deepEqual(
+    requestedThumbnailRefreshEntries(entries).map((item) => item.path),
+    ['/d/news-a.json', '/d/news-b.json'],
   );
 });
 
