@@ -87,12 +87,12 @@ test('réparation éditoriale: le prompt reste borné aux erreurs et au brouillo
 
 test('miniatures: la réparation ne change ni la politique ni la génération unique', () => {
   const prompt = buildBannerPrompt({ media, draft });
-  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v2');
-  assert.match(prompt, /Crée UNE SEULE miniature/);
-  assert.match(prompt, /Ne propose pas de variantes et ne génère pas de deuxième image/);
-  assert.match(prompt, /bleu signature #1641A8 dominant/);
-  assert.match(prompt, /60–70 % par la couleur de chaîne/);
-  assert.match(prompt, /toile de fond principale/);
+  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v3-qa');
+  assert.match(prompt, /EXACTLY ONE professional article thumbnail/);
+  assert.match(prompt, /no variants and no second image/);
+  assert.match(prompt, /signature blue #1641A8 dominant/);
+  assert.match(prompt, /60-70% of the image/);
+  assert.match(prompt, /Every qa field is mandatory/);
 });
 
 test('publication: AskOptimize est autorisé mais un domaine tiers inconnu reste bloqué', () => {

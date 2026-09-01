@@ -13,7 +13,7 @@ test('thumbnail refresh: ne sélectionne que les Actualités et Guides', () => {
   assert.deepEqual(refreshableThumbnailDrafts(entries).map((item) => item.draft.contentType), ['guide', 'news']);
 });
 
-test('thumbnail refresh: le lot test couvre un contenu par média', () => {
+test('thumbnail refresh: tous les contenus éligibles sont sélectionnés sans plafond arbitraire', () => {
   const entries = [
     entry('/d/chaimbault-b.json', 'chaimbault', 'news'),
     entry('/d/chaimbault-a.json', 'chaimbault', 'guide'),
@@ -21,7 +21,7 @@ test('thumbnail refresh: le lot test couvre un contenu par média', () => {
     entry('/d/video.json', 'logiciels', 'video'),
   ];
   assert.deepEqual(
-    representativeThumbnailBatch(entries, { limit: 6 }).map((item) => item.path),
-    ['/d/chaimbault-a.json', '/d/tesla-a.json'],
+    representativeThumbnailBatch(entries, { limit: 1 }).map((item) => item.path),
+    ['/d/chaimbault-a.json', '/d/chaimbault-b.json', '/d/tesla-a.json'],
   );
 });

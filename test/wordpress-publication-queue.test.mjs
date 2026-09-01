@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { MediaStateStore } from '../media/state-store.mjs';
 import { WordPressPublicationWorker } from '../media/wordpress-publication-worker.mjs';
+import { ARTICLE_THUMBNAIL_POLICY } from '../media/thumbnail-policy.mjs';
 
 const NOW = new Date('2026-08-24T09:00:00.000Z');
 
@@ -19,6 +20,13 @@ function eligibleDraft(overrides = {}) {
     generatedAt: NOW.toISOString(),
     publicationMode: 'draft',
     qa: { passed: true },
+    banner: {
+      path: '/tmp/approved-thumbnail.webp',
+      alt: 'Miniature validée',
+      width: 1_280,
+      height: 720,
+      qa: { passed: true, policy: ARTICLE_THUMBNAIL_POLICY, issues: [] },
+    },
     publicationEligibility: { status: 'eligible' },
     ...overrides,
   };

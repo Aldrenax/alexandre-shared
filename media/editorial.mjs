@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { recommendedPublicationTime } from './publication-schedule.mjs';
+import {
+  ARTICLE_THUMBNAIL_POLICY,
+  articleThumbnailProfile,
+  officialThumbnailAssets,
+} from './thumbnail-policy.mjs';
 
 const STYLE_GUIDE = readFileSync(
   fileURLToPath(new URL('../STYLE_GUIDE_BASE.md', import.meta.url)),
@@ -14,38 +19,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
 });
 
 export const EDITORIAL_REVISION = 13;
-export const ARTICLE_THUMBNAIL_POLICY = 'youtube-thumbnail-imagegen:article-single-v2';
-
-const ARTICLE_THUMBNAIL_PROFILES = Object.freeze({
-  chaimbault: Object.freeze({
-    palette: 'cyan #1394C7 dominant, avec blanc et noir réservés au contraste et à la typographie',
-    tone: 'credible, net, business et anti-hype',
-  }),
-  'tesla-tech': Object.freeze({
-    palette: 'rouge signature #B02112 dominant, avec une montée lumineuse vers #E33A2E; blanc et noir uniquement pour le contraste, sans fond bordeaux ou noir dominant',
-    tone: 'énergique, orienté produit et technologie, lumineux et sans dramatisation artificielle',
-  }),
-  affiliation: Object.freeze({
-    palette: 'jaune signature #F4BD3D dominant, avec une montée lumineuse vers #FFDB70; blanc et noir uniquement pour le contraste, sans fond or brun dominant',
-    tone: 'commercial, dynamique et lumineux, sans promesse de revenu',
-  }),
-  logiciels: Object.freeze({
-    palette: 'violet signature #65468A dominant, avec une montée lumineuse vers #8A6BB0; blanc, noir et jaune uniquement pour le contraste, sans fond violet presque noir',
-    tone: 'moderne, pratique, logiciel et très lisible',
-  }),
-  investissement: Object.freeze({
-    palette: 'vert signature #3E8C20 dominant, avec une montée lumineuse vers #76B657; blanc et noir uniquement pour le contraste, sans fond vert forêt dominant',
-    tone: 'rassurant, mesuré, factuel et lumineux, sans gain inventé',
-  }),
-  entreprise: Object.freeze({
-    palette: 'bleu signature #1641A8 dominant, avec une montée lumineuse vers #5E7DD0; blanc et noir uniquement pour le contraste, sans fond marine dominant',
-    tone: 'sérieux, rassurant, lumineux et peu dramatique',
-  }),
-});
-
-export function articleThumbnailProfile(media) {
-  return ARTICLE_THUMBNAIL_PROFILES[media?.slug] || ARTICLE_THUMBNAIL_PROFILES.chaimbault;
-}
+export { ARTICLE_THUMBNAIL_POLICY, articleThumbnailProfile } from './thumbnail-policy.mjs';
 
 function thumbnailDirection(draft) {
   const text = `${draft?.title || ''} ${draft?.description || ''}`.toLowerCase();
@@ -252,30 +226,38 @@ export function buildEditorialRepairPrompt({ media, candidate, contentType, draf
 export function buildBannerPrompt({ media, draft }) {
   const brief = draft.bannerBrief || {};
   const profile = articleThumbnailProfile(media);
+  const officialAssets = officialThumbnailAssets(draft);
   return [
-    `Applique les principes visuels de la skill youtube-thumbnail-imagegen sans modifier la skill source. Politique: ${ARTICLE_THUMBNAIL_POLICY}.`,
-    `Crée UNE SEULE miniature d'article professionnelle pour ${media.name}.`,
-    'Ne propose pas de variantes et ne génère pas de deuxième image.',
-    'Format paysage 16:9, sortie 1280x720, pensée pour une lecture immédiate sur mobile.',
-    `Sujet: ${draft.title}`,
+    `Apply the visual principles of the youtube-thumbnail-imagegen skill. Policy: ${ARTICLE_THUMBNAIL_POLICY}.`,
+    `Create EXACTLY ONE professional article thumbnail for ${media.name}; no variants and no second image.`,
+    'Landscape 16:9, final output 1280x720, immediately legible on a small mobile card.',
+    `Topic: ${draft.title}`,
     `Concept: ${brief.concept || draft.description}`,
     `Direction: ${thumbnailDirection(draft)}.`,
-    `Palette de chaîne: ${profile.palette}.`,
-    `Ton: ${profile.tone}.`,
-    'Le décor et l’éclairage doivent être dominés à 60–70 % par la couleur de chaîne, sous forme de fond coloré, surface, halo ou dégradé lumineux. Le blanc est un neutre de contraste, jamais la toile de fond principale et ne doit pas occuper plus de 15 % de l’image sauf nécessité factuelle du sujet.',
-    'Rendu lumineux ne signifie jamais fond blanc : utilise une version claire ou moyenne de la couleur de chaîne, avec des ombres contrôlées. N’utilise pas de fond noir, presque noir ou très assombri sauf si le sujet l’exige explicitement.',
-    `Texte visible exact: ${brief.headline || 'aucun texte'}. S'il y a du texte, limite absolue de 2 à 4 mots français.`,
-    'Composition: un seul élément dominant, au maximum un indice secondaire et un seul bloc de texte.',
-    'Privilégie un objet concret, une interface très simplifiée ou un symbole directement lié au sujet.',
-    'Typographie si texte: style Roboto Condensed Bold, capitales, blanc ou jaune, contour noir épais; un seul mot accentué en rouge ou vert si utile.',
-    'Couleurs vives mais contrôlées, contraste fort et fond propre; aucun empilement de cartes, aucun tableau de bord dense.',
-    'Aucun visage: ce flux automatisé ne fournit pas de photo de référence et ne doit jamais inventer les traits d’Alexandre.',
-    'Interdictions: plusieurs idées centrales, petit texte, logo inventé, faux écran, marque déformée, faux visage, chiffres, prix, rendements, statistiques ou promesses non fournis et sourcés.',
-    'Utilise l’outil image_gen avec aspect_ratio="landscape".',
-    'Après génération, copie sans transformation la valeur `image` retournée par image_gen dans `imageSource`.',
-    'Cette valeur peut être une URL, une data URL ou un chemin absolu dans le cache Hermes.',
-    'Retourne le résultat sous ce schéma:',
-    '{"success":true,"imageSource":"valeur image exacte retournée par image_gen","alt":"texte alternatif factuel","width":1280,"height":720}',
+    `Channel palette: ${profile.palette}.`,
+    `Tone: ${profile.tone}.`,
+    'The channel color must cover 60-70% of the image through the background, surfaces, lighting or a bright gradient. White and black are contrast neutrals, never the dominant canvas.',
+    `Exact visible French text: ${brief.headline || 'NO TEXT'}. If present it must be 2-4 words, uppercase, mobile-safe, fully inside generous safe margins, never clipped.`,
+    'Composition: one dominant element, at most one secondary clue, and at most one text block.',
+    'Use a concrete generic unbranded object or abstract technical symbol. Never invent an interface, screen, logo, brand mark or person.',
+    `Official reusable asset allowlist (empty means none): ${JSON.stringify(officialAssets)}.`,
+    'A logo, product interface, dashboard, screenshot or face may appear ONLY when its exact official reference asset is listed above. Otherwise replace it with a generic unbranded object.',
+    'Typography if text exists: condensed bold capitals, white or yellow, thick black outline. High contrast, clean background, no dense dashboard.',
+    'Forbidden: multiple central ideas, small text, invented or approximate logo, fake screen/interface, deformed brand, invented face, unsourced number, price, yield, statistic or promise.',
+    'Use image_gen with aspect_ratio="landscape" exactly once.',
+    'After generation, visually inspect that single result and copy its exact `image` value to `imageSource`.',
+    'Return JSON only. Every qa field is mandatory; if it cannot be verified, set success=false.',
+    '{"success":true,"imageSource":"exact image value","alt":"factual alt","width":1280,"height":720,"qa":{"finalAssetCount":1,"paletteCoverage":0.65,"observedText":"EXACT TEXT OR EMPTY","textExact":true,"textClipped":false,"mobileReadable":true,"usesLogo":false,"usesInterface":false,"usesFace":false,"assetSources":[],"fakeLogo":false,"fakeInterface":false,"fakeFace":false}}',
+  ].join('\n');
+}
+
+export function buildBannerRepairPrompt({ media, draft, issues, attempt }) {
+  return [
+    buildBannerPrompt({ media, draft }),
+    '',
+    `CORRECTIVE ATTEMPT ${attempt}. The previous single result failed QA.`,
+    `Fix only these visual QA failures: ${JSON.stringify(issues || [])}.`,
+    'Generate exactly one new replacement image in this attempt, inspect it, and return the same complete JSON schema. Do not return or reuse the rejected asset.',
   ].join('\n');
 }
 

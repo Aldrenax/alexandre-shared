@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
 import { readJson, writeJsonAtomic } from './state-store.mjs';
+import { thumbnailPublicationBlockers } from './thumbnail-qa.mjs';
 
 export const WORDPRESS_TARGETS = Object.freeze({
   chaimbault: Object.freeze({ siteKey: 'principal', domain: 'alexandrechaimbault.com', stagingPath: '/', newsType: 'article', newsRoute: 'blog' }),
@@ -224,6 +225,8 @@ export function withVerifiedSourceDate(store, draft) {
 export function payloadForWordPressDraft(draft, { featuredMediaId = 0 } = {}) {
   const target = wordpressTarget(draft);
   if (!draft?.qa?.passed) throw new Error('Le brouillon doit avoir passé la QA');
+  const thumbnailBlockers = thumbnailPublicationBlockers(draft);
+  if (thumbnailBlockers.length) throw new Error(`Miniature interdite à la publication: ${thumbnailBlockers.join(',')}`);
   const postType = { news: target.newsType, video: 'video', guide: 'guide' }[draft.contentType];
   if (!postType) throw new Error(`Type WordPress non pris en charge: ${draft.contentType}`);
   const routePath = publicPath(draft, target);
@@ -285,6 +288,8 @@ export function payloadForWordPressDraft(draft, { featuredMediaId = 0 } = {}) {
 export function assetForWordPressDraft(draft, { includeBytes = true } = {}) {
   wordpressTarget(draft);
   if (!['news', 'guide'].includes(draft.contentType)) return null;
+  const thumbnailBlockers = thumbnailPublicationBlockers(draft);
+  if (thumbnailBlockers.length) throw new Error(`Miniature interdite à la publication: ${thumbnailBlockers.join(',')}`);
   const bannerPath = String(draft.banner?.path || '').trim();
   if (!bannerPath) throw new Error('La bannière locale du brouillon est introuvable');
   const path = resolve(bannerPath);

@@ -21,7 +21,6 @@ import {
 } from './candidates.mjs';
 import {
   ARTICLE_THUMBNAIL_POLICY,
-  buildBannerPrompt,
   buildEditorialPrompt,
   buildEditorialRepairPrompt,
   EDITORIAL_REVISION,
@@ -31,6 +30,11 @@ import { qaDraft } from './qa.mjs';
 import { guideCandidate, rankGuideOpportunities } from './guide-planner.mjs';
 import { HermesClient } from './hermes-client.mjs';
 import { MediaStateStore, readJson } from './state-store.mjs';
+import {
+  generateThumbnailWithQa,
+  promoteThumbnailCandidate,
+  ThumbnailGenerationBudget,
+} from './thumbnail-generation.mjs';
 
 const X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657n;
 export const EVIDENCE_REVISION = 2;
@@ -688,6 +692,7 @@ export class MediaEngine {
     getVideoInfoImpl = getVideoInfo,
     enrichCandidateEvidenceImpl = enrichCandidateEvidence,
     env = process.env,
+    thumbnailBudget = null,
   } = {}) {
     this.store = store;
     this.hermes = hermes;
@@ -698,6 +703,7 @@ export class MediaEngine {
     this.getVideoInfo = getVideoInfoImpl;
     this.enrichCandidateEvidence = enrichCandidateEvidenceImpl;
     this.env = env;
+    this.thumbnailBudget = thumbnailBudget || ThumbnailGenerationBudget.fromEnvironment(env);
   }
 
   validate() {
@@ -975,17 +981,36 @@ export class MediaEngine {
     };
 
     if (generateBanner && contentType !== 'video') {
-      const bannerResult = await this.hermes.generateBannerJson(buildBannerPrompt({ media, draft }));
-      const imageSource = bannerResult?.imageSource || bannerResult?.imageUrl || bannerResult?.image;
-      if (!bannerResult?.success || !imageSource) throw new Error(`Génération de bannière échouée pour ${draft.slug}`);
       const bannerPath = join(this.store.assetsDir, media.slug, `${draft.slug}.webp`);
-      await materializeBanner(imageSource, bannerPath, this.fetchImpl);
+      const candidateRoot = join(this.store.runtimeDir, 'thumbnail-candidates', media.slug, draft.slug);
+      const thumbnail = await generateThumbnailWithQa({
+        hermes: this.hermes,
+        media,
+        draft,
+        materialize: (imageSource, path) => materializeBanner(imageSource, path, this.fetchImpl),
+        candidatePathForAttempt: (attempt) => join(candidateRoot, `attempt-${attempt}.webp`),
+        budget: this.thumbnailBudget,
+        maxAttempts: Number(this.env.MEDIA_ENGINE_THUMBNAIL_MAX_ATTEMPTS_PER_ITEM || 3),
+      });
+      let promoted = { finalPath: thumbnail.path || join(candidateRoot, 'rejected.webp'), backupPath: null };
+      if (thumbnail.passed) {
+        promoted = promoteThumbnailCandidate(thumbnail.path, bannerPath, {
+          backupRoot: join(this.store.runtimeDir, 'backups', 'thumbnail-generation'),
+          mediaSlug: media.slug,
+        });
+      }
       draft.banner = {
-        path: bannerPath,
-        alt: bannerResult.alt || draft.bannerBrief?.alt || draft.title,
+        path: promoted.finalPath,
+        alt: thumbnail.modelResult?.alt || draft.bannerBrief?.alt || draft.title,
         width: 1_280,
         height: 720,
         source: `hermes:image_gen:${ARTICLE_THUMBNAIL_POLICY}`,
+        qa: thumbnail.passed ? {
+          ...thumbnail.qa,
+          inspection: { ...thumbnail.qa.inspection, path: promoted.finalPath },
+        } : thumbnail.qa,
+        attempts: thumbnail.attempts,
+        backupPath: promoted.backupPath,
       };
     } else if (contentType === 'video' && video?.thumbnailPath) {
       draft.banner = {

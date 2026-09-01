@@ -56,6 +56,16 @@ import {
 } from '../lib/whisper.mjs';
 import { extractPublishedAt, getChannelFeed, getChannelFeedWithYtDlp, resolveVideoMetadata, youtubeThumbnailCandidates } from '../lib/youtube.mjs';
 
+function approvedArticleBanner(path = '/tmp/approved-thumbnail.webp') {
+  return {
+    path,
+    alt: 'Miniature validée',
+    width: 1_280,
+    height: 720,
+    qa: { passed: true, policy: ARTICLE_THUMBNAIL_POLICY, issues: [] },
+  };
+}
+
 test('registre: huit chaînes, six médias éditoriaux et sources officielles', () => {
   assert.deepEqual(validateRegistry(), []);
   assert.equal(MEDIA_NETWORK.length, 8);
@@ -104,18 +114,18 @@ test('miniature article: adaptation image unique de youtube-thumbnail-imagegen e
   };
   const prompt = buildBannerPrompt({ media, draft });
 
-  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v2');
-  assert.match(prompt, /UNE SEULE miniature/);
-  assert.match(prompt, /Ne propose pas de variantes/);
-  assert.match(prompt, /skill youtube-thumbnail-imagegen/);
-  assert.match(prompt, /2 à 4 mots/);
-  assert.match(prompt, /un seul élément dominant/);
-  assert.match(prompt, /Aucun visage/);
-  assert.match(prompt, /vert signature #3E8C20 dominant/);
-  assert.match(prompt, /60–70 % par la couleur de chaîne/);
+  assert.equal(ARTICLE_THUMBNAIL_POLICY, 'youtube-thumbnail-imagegen:article-single-v3-qa');
+  assert.match(prompt, /EXACTLY ONE professional article thumbnail/);
+  assert.match(prompt, /no variants/);
+  assert.match(prompt, /youtube-thumbnail-imagegen.*skill/);
+  assert.match(prompt, /2-4 words/);
+  assert.match(prompt, /one dominant element/);
+  assert.match(prompt, /Never invent an interface/);
+  assert.match(prompt, /signature green #3E8C20 dominant/);
+  assert.match(prompt, /60-70% of the image/);
   assert.match(prompt, /Direction: Trap \/ Truth/);
-  assert.match(prompt, /chiffres, prix, rendements, statistiques ou promesses non fournis et sourcés/);
-  assert.match(articleThumbnailProfile(media).tone, /mesuré/);
+  assert.match(prompt, /unsourced number, price, yield, statistic or promise/);
+  assert.match(articleThumbnailProfile(media).tone, /measured/);
 });
 
 test('environnement: le fichier shadow remplace une variable principale vide', () => {
@@ -877,7 +887,7 @@ test('rédaction: prompt sourcé, QA stricte et activation protégée', () => {
   assert.equal(draft.sourcePublishedAt, sourcePublishedAt);
   const banner = join(mkdtempSync(join(tmpdir(), 'media-banner-')), 'banner.webp');
   writeFileSync(banner, Buffer.alloc(9_000));
-  draft = { ...draft, banner: { path: banner, alt: 'Bannière GitHub', width: 1_200, height: 630 } };
+  draft = { ...draft, banner: approvedArticleBanner(banner) };
   const qa = qaDraft(draft, media, { candidate });
   assert.equal(qa.passed, true, JSON.stringify(qa.issues));
   assert.equal(publicationDecision({ draft, qa, media, publicationMode: 'draft' }).allowed, false);
@@ -1176,6 +1186,7 @@ test('publication VPS: URL, période d’observation, autorisation et push sont 
     slug: 'nouvelle-version-logiciel',
     title: 'Une nouvelle version du logiciel est disponible',
     qa: { passed: true },
+    banner: approvedArticleBanner(),
   };
   const path = store.saveDraft('logiciels', { ...draft, candidateId: 'publication-test' });
   const sites = siteConfigsFromPayload({
@@ -1241,6 +1252,7 @@ test('publication automatique: la bascule ignore l’historique et impose un ryt
   const common = {
     publicationMode: 'draft',
     qa: { passed: true },
+    banner: approvedArticleBanner(),
     publicationEligibility: { status: 'eligible' },
   };
   store.saveDraft('chaimbault', {
@@ -1543,6 +1555,7 @@ test('publication automatique: la priorité est première news, vidéo, seconde 
     publicationMode: 'draft',
     generatedAt: '2026-08-12T08:00:00.000Z',
     qa: { passed: true },
+    banner: approvedArticleBanner(),
     publicationEligibility: { status: 'eligible' },
   };
   for (const draft of [
@@ -1594,6 +1607,7 @@ test('publication automatique: le scheduler sert les six médias avant les deux 
     publicationMode: 'draft',
     generatedAt: '2026-08-14T06:00:00.000Z',
     qa: { passed: true },
+    banner: approvedArticleBanner(),
     publicationEligibility: { status: 'eligible' },
   };
   const drafts = [

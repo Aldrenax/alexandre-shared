@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { CONTENT_REQUIREMENTS } from './editorial.mjs';
+import { thumbnailPublicationBlockers } from './thumbnail-qa.mjs';
 
 function issue(code, message, severity = 'error') {
   return { code, message, severity };
@@ -35,6 +36,11 @@ function bannerIssues(draft, { requireBanner }) {
   const size = statSync(draft.banner.path).size;
   if (size < 8_000) return [issue('banner-too-small', `Bannière anormalement petite: ${size} octets`)];
   if (!draft.banner.alt?.trim()) return [issue('banner-alt-missing', 'Texte alternatif de bannière manquant')];
+  if (!['news', 'guide'].includes(draft.contentType)) return [];
+  if (draft.banner.qa?.passed !== true) return [
+    issue('thumbnail-qa-failed', 'La miniature générée n’a pas passé la QA visuelle'),
+    ...(draft.banner.qa?.issues || []).map((entry) => issue(entry.code || 'thumbnail-qa-issue', entry.message || 'Échec QA miniature')),
+  ];
   return [];
 }
 
@@ -112,6 +118,7 @@ export function publicationDecision({
 }) {
   const blockers = [];
   if (!qa?.passed) blockers.push('qa-failed');
+  blockers.push(...thumbnailPublicationBlockers(draft));
   if (publicationMode !== 'automatic') blockers.push('publication-mode-not-automatic');
   if (!explicitApproval) blockers.push('automatic-publication-not-approved');
   if (shadowDays < shadowDaysRequired) blockers.push(`shadow-period-${shadowDays}/${shadowDaysRequired}`);

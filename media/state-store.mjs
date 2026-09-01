@@ -21,6 +21,7 @@ const QUEUE_KINDS = new Set([
   'publication-ready',
   'publication-verification',
   'publication-failed',
+  'thumbnail-refresh',
 ]);
 
 function ensureDir(path) {

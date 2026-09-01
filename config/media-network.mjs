@@ -300,8 +300,8 @@ export const MEDIA_ENGINE_DEFAULTS = Object.freeze({
   cadenceFallbackMinimumScore: 60,
   shadowDaysRequired: 7,
   banner: {
-    width: 1200,
-    height: 630,
+    width: 1280,
+    height: 720,
     format: 'webp',
   },
   models: {

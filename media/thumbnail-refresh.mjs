@@ -6,18 +6,13 @@ export function refreshableThumbnailDrafts(entries) {
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function representativeThumbnailBatch(entries, { limit = 6, all = false } = {}) {
-  const eligible = refreshableThumbnailDrafts(entries);
-  if (all) return eligible.slice(0, limit);
+export function thumbnailRefreshSelection(entries) {
+  return refreshableThumbnailDrafts(entries);
+}
 
-  const selected = [];
-  const coveredMedia = new Set();
-  for (const entry of eligible) {
-    const mediaSlug = entry.draft.mediaSlug;
-    if (!mediaSlug || coveredMedia.has(mediaSlug)) continue;
-    selected.push(entry);
-    coveredMedia.add(mediaSlug);
-    if (selected.length >= limit) return selected;
-  }
-  return selected;
+// Compatibilité d'import: la sélection n'est plus tronquée par une taille de
+// lot arbitraire. La consommation est bornée au niveau des tentatives par le
+// budget global et le coupe-circuit de génération.
+export function representativeThumbnailBatch(entries) {
+  return thumbnailRefreshSelection(entries);
 }

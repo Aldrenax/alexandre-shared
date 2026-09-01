@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { MediaStateStore, writeJsonAtomic } from '../media/state-store.mjs';
+import { ARTICLE_THUMBNAIL_POLICY } from '../media/thumbnail-policy.mjs';
 import {
   markdownBlocks,
   assetForWordPressDraft,
@@ -33,6 +34,14 @@ Troisième paragraphe utile.
 Quatrième paragraphe de conclusion.`;
 
 function draft(overrides = {}) {
+  const banner = {
+    path: '/tmp/approved-thumbnail.webp',
+    alt: 'Miniature validée',
+    width: 1_280,
+    height: 720,
+    qa: { passed: true, policy: ARTICLE_THUMBNAIL_POLICY, issues: [] },
+    ...(overrides.banner || {}),
+  };
   return {
     candidateId: 'candidate-123',
     mediaSlug: 'chaimbault',
@@ -51,6 +60,7 @@ function draft(overrides = {}) {
     qa: { passed: true },
     publicationEligibility: { status: 'eligible' },
     ...overrides,
+    banner,
   };
 }
 
