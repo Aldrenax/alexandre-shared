@@ -65,11 +65,12 @@ export class WordPressPublicationWorker extends PublicationWorker {
     const sinceAt = Date.parse(since || this.env.MEDIA_ENGINE_PUBLICATION_QUEUE_CUTOVER_AT || '');
     const queued = [];
     for (const { path, draft } of this.store.listDrafts(mediaSlug)) {
-      if (!draft?.qa?.passed || draft?.publicationEligibility?.status !== 'eligible') continue;
-      if (this.store.hasEvent(`published:${draft.mediaSlug}:${draft.contentType}:${draft.slug}`)) continue;
-      const generatedAt = Date.parse(draft.generatedAt || '');
+      const evaluatedDraft = this.revalidateDraft(draft);
+      if (!evaluatedDraft?.qa?.passed || evaluatedDraft?.publicationEligibility?.status !== 'eligible') continue;
+      if (this.store.hasEvent(`published:${evaluatedDraft.mediaSlug}:${evaluatedDraft.contentType}:${evaluatedDraft.slug}`)) continue;
+      const generatedAt = Date.parse(evaluatedDraft.generatedAt || '');
       if (Number.isFinite(sinceAt) && (!Number.isFinite(generatedAt) || generatedAt < sinceAt)) continue;
-      const entryPath = this.store.enqueuePublicationReady(path, draft);
+      const entryPath = this.store.enqueuePublicationReady(path, evaluatedDraft);
       if (entryPath) queued.push(entryPath);
     }
     return queued;

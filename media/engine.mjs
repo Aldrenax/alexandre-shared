@@ -40,6 +40,7 @@ import {
   thumbnailRefreshQueueId,
   thumbnailRefreshRetryDelayMinutes,
 } from './thumbnail-refresh.mjs';
+import { hydrateConfiguredSourcePolicies } from './source-policy.mjs';
 
 const X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657n;
 export const EVIDENCE_REVISION = 2;
@@ -156,6 +157,9 @@ const REPAIRABLE_QA_ISSUES = new Set([
   'legal-tax-disclaimer-missing',
   'affiliate-disclosure-missing',
   'affiliate-link-missing',
+  'author-views-institutional-attribution',
+  'author-views-attribution-missing',
+  'author-views-reserve-missing',
 ]);
 
 export function qaCanBeRepaired(qa) {
@@ -527,7 +531,10 @@ export function buildQualifiedCandidatePool({
     const payload = entry?.payload;
     const target = mediaMap.get(payload?.mediaSlug);
     if (!target || !candidateIsFresh(payload, { now, maximumAgeHours })) continue;
-    const sanitized = sanitizePersistedXEvidence(payload, target);
+    const sanitized = hydrateConfiguredSourcePolicies(
+      sanitizePersistedXEvidence(payload, target),
+      target.slug,
+    );
     // Un ancien candidat déjà multi-source conserve son identité historique,
     // mais ses preuves doivent toujours décrire le même événement selon la
     // règle stricte actuelle. Une ancienne fusion ambiguë est exclue plutôt
@@ -558,10 +565,12 @@ export function buildQualifiedCandidatePool({
         sourceId: source.sourceId,
         sourceTier: Number(source.tier),
         sourceOfficial: Boolean(source.official),
+        sourcePolicy: source.sourcePolicy || null,
         title: source.title || sanitized.title,
         url,
         excerpt: source.excerpt || '',
         publishedAt: source.publishedAt || sanitized.publishedAt || null,
+        author: source.author || '',
         topicRoutes: Array.isArray(source.topicRoutes) ? source.topicRoutes : [],
         pageDateMode: source.pageDateMode || null,
         media: [target.slug],
@@ -626,7 +635,7 @@ export function buildQualifiedCandidatePool({
   for (const candidate of currentCandidates) {
     if (candidate.status !== 'qualified' || !mediaMap.has(candidate.mediaSlug)) continue;
     if (!candidateIsFresh(candidate, { now, maximumAgeHours })) continue;
-    values.push(candidate);
+    values.push(hydrateConfiguredSourcePolicies(candidate, candidate.mediaSlug));
   }
   const deduped = new Map();
   for (const candidate of values.sort(candidateSort)) {

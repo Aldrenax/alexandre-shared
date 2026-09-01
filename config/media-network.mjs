@@ -7,6 +7,7 @@
  */
 
 import { EDITORIAL_BRIEFS } from './editorial-briefs.mjs';
+import { SOURCE_POLICY_AUTHOR_VIEWS } from './source-policies.mjs';
 
 const dailyCadence = Object.freeze({
   newsTargetPerWeek: 7,
@@ -262,7 +263,7 @@ export const MEDIA_SOURCES = Object.freeze([
   // Finance et investissement
   source({ id: 'amf-news', name: 'AMF À la une', type: 'page', pageMode: 'links', url: 'https://www.amf-france.org/fr/actualites-publications/la-une', tier: 1, official: true, media: ['investissement'] }),
   source({ id: 'ecb-press', name: 'BCE Communiqués et prises de parole', type: 'rss', url: 'https://www.ecb.europa.eu/rss/press.html', tier: 0, official: true, media: ['investissement'] }),
-  source({ id: 'ecb-blog', name: 'BCE Blog', type: 'rss', url: 'https://www.ecb.europa.eu/rss/blog.html', tier: 0, official: true, media: ['investissement'] }),
+  source({ id: 'ecb-blog', name: 'BCE Blog', type: 'rss', sourcePolicy: SOURCE_POLICY_AUTHOR_VIEWS, url: 'https://www.ecb.europa.eu/rss/blog.html', tier: 0, official: true, media: ['investissement'] }),
   // Source officielle complémentaire. L'AMF et la BCE restent les références
   // requises : une indisponibilité isolée de la Banque de France ne doit pas
   // immobiliser l'ensemble du réseau éditorial.

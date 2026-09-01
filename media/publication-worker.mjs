@@ -9,9 +9,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { mediaBySlug } from './registry.mjs';
-import { publicationDecision } from './qa.mjs';
+import { publicationDecision, qaDraft } from './qa.mjs';
 import { SitePublisher } from './site-publisher.mjs';
 import { readJson, writeJsonAtomic } from './state-store.mjs';
+import { candidateForDraft, sourcePolicySnapshot } from './source-policy.mjs';
 
 const ROUTES = Object.freeze({
   news: 'actualites',
@@ -131,11 +132,57 @@ export class PublicationWorker {
     this.now = now;
   }
 
+  persistedCandidateForDraft(draft) {
+    if (!draft?.mediaSlug || !draft?.candidateId) return null;
+    const queueId = `${draft.mediaSlug}-${draft.candidateId}`;
+    return readJson(this.store.queuePath('qualified', queueId), null)
+      || readJson(this.store.queuePath('candidates', queueId), null);
+  }
+
+  revalidateDraft(draft, { requireBanner = true } = {}) {
+    const persistedCandidate = this.persistedCandidateForDraft(draft);
+    const hasSnapshot = Array.isArray(draft?.sourcePolicySnapshot)
+      && draft.sourcePolicySnapshot.length > 0;
+    const sourcedLegacyNews = draft?.contentType === 'news'
+      && Array.isArray(draft?.sourceUrls)
+      && draft.sourceUrls.length > 0;
+    // Les anciens fixtures internes sans preuve source gardent leur verdict
+    // historique. Tout vrai brouillon source, snapshotte ou encore rattache a
+    // sa file candidate repasse en revanche la QA courante avant publication.
+    if (!persistedCandidate && !hasSnapshot && !sourcedLegacyNews) return draft;
+    const media = mediaBySlug(draft?.mediaSlug);
+    const candidate = candidateForDraft(draft, persistedCandidate);
+    if (!media) return {
+      ...draft,
+      qa: {
+        version: 1,
+        checkedAt: this.now().toISOString(),
+        mediaSlug: draft?.mediaSlug || null,
+        candidateId: draft?.candidateId || null,
+        passed: false,
+        errorCount: 1,
+        warningCount: 0,
+        issues: [{ code: 'publication-media-unknown', message: 'Média inconnu au contrôle de publication', severity: 'error' }],
+      },
+    };
+    const qa = qaDraft(draft, media, {
+      candidate,
+      requireBanner,
+      now: this.now(),
+    });
+    return {
+      ...draft,
+      qa,
+      sourcePolicySnapshot: candidate ? sourcePolicySnapshot(candidate) : (draft.sourcePolicySnapshot || []),
+    };
+  }
+
   decisionFor(draft) {
-    const media = mediaBySlug(draft.mediaSlug);
+    const evaluatedDraft = this.revalidateDraft(draft);
+    const media = mediaBySlug(evaluatedDraft.mediaSlug);
     const decision = publicationDecision({
-      draft,
-      qa: draft.qa,
+      draft: evaluatedDraft,
+      qa: evaluatedDraft.qa,
       media,
       publicationMode: this.env.MEDIA_ENGINE_PUBLICATION_MODE || 'draft',
       explicitApproval: boolean(this.env.MEDIA_ENGINE_AUTOMATIC_PUBLICATION_APPROVED),
@@ -162,6 +209,7 @@ export class PublicationWorker {
     }
     decision.allowed = decision.blockers.length === 0;
     decision.action = decision.allowed ? 'publish' : 'keep-draft';
+    decision.qa = evaluatedDraft.qa;
     return decision;
   }
 

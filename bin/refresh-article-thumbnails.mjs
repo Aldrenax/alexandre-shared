@@ -24,6 +24,7 @@ import {
   requestedThumbnailRefreshEntries,
   reconcileThumbnailQueues,
 } from '../media/thumbnail-refresh.mjs';
+import { candidateForDraft } from '../media/source-policy.mjs';
 
 loadEnvironmentFile(process.env.MEDIA_ENGINE_ENV_FILE || '/etc/alexandre-media-engine/media-engine.env');
 
@@ -196,8 +197,9 @@ for (const { path: draftPath, draft: originalDraft } of entries) {
       attempts: allAttempts,
     };
     const candidateQueueId = `${media.slug}-${originalDraft.candidateId}`;
-    const candidate = readJson(engine.store.queuePath('qualified', candidateQueueId), null)
+    const persistedCandidate = readJson(engine.store.queuePath('qualified', candidateQueueId), null)
       || readJson(engine.store.queuePath('candidates', candidateQueueId), null);
+    const candidate = candidateForDraft(originalDraft, persistedCandidate);
     const alreadyPublished = [
       join(engine.store.stateDir, 'wordpress-publication-receipts', media.slug, `${originalDraft.slug}.json`),
       join(engine.store.stateDir, 'publication-receipts', media.slug, `${originalDraft.slug}.json`),

@@ -76,7 +76,7 @@ test('réparation éditoriale: le prompt reste borné aux erreurs et au brouillo
     qa: { issues: [{ code: 'minimum_words', severity: 'error' }] },
   });
 
-  assert.equal(EDITORIAL_REVISION, 13);
+  assert.equal(EDITORIAL_REVISION, 14);
   assert.match(prompt, /RÉPARATION QA BORNÉE/);
   assert.match(prompt, /vise au moins 2250 mots utiles/);
   assert.match(prompt, /Le titre doit rester exactement: Titre vidéo exact/);

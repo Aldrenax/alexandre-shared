@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { SOURCE_POLICY_AUTHOR_VIEWS } from '../config/source-policies.mjs';
 import { recommendedPublicationTime } from './publication-schedule.mjs';
+import { sourcePolicySnapshot } from './source-policy.mjs';
 import {
   ARTICLE_THUMBNAIL_POLICY,
   articleThumbnailProfile,
@@ -18,7 +20,7 @@ export const CONTENT_REQUIREMENTS = Object.freeze({
   guide: Object.freeze({ section: 'guides', minimumWords: 3_500, maximumWords: 7_500 }),
 });
 
-export const EDITORIAL_REVISION = 13;
+export const EDITORIAL_REVISION = 14;
 export { ARTICLE_THUMBNAIL_POLICY, articleThumbnailProfile } from './thumbnail-policy.mjs';
 
 function thumbnailDirection(draft) {
@@ -45,11 +47,24 @@ function sourcePacket(candidate, maximumExcerptLength = 3_000) {
     name: source.sourceId,
     official: Boolean(source.official),
     tier: source.tier,
+    sourcePolicy: source.sourcePolicy || null,
+    author: source.author || null,
     title: source.title,
     url: source.url,
     publishedAt: source.publishedAt,
     excerpt: String(source.excerpt || '').slice(0, maximumExcerptLength),
   }));
+}
+
+function sourcePolicyInstructions(sources) {
+  if (!sources.some((source) => source.sourcePolicy === SOURCE_POLICY_AUTHOR_VIEWS)) return [];
+  return [
+    'POLITIQUE SOURCE SIGNÉE OBLIGATOIRE:',
+    '- Une source marquée author-views exprime l’analyse de ses auteurs, même si elle est hébergée sur le site d’une institution.',
+    '- Attribue les conclusions analytiques aux auteurs nommés dans le paquet de sources ou, à défaut, aux auteurs du billet. Ne les attribue jamais à la BCE comme position institutionnelle.',
+    '- Inclus explicitement cette réserve dans le body: « Cette analyse reflète le point de vue de ses auteurs et ne constitue pas une position officielle de la BCE. »',
+    '- Une formulation comme « deux économistes de la BCE analysent » est acceptable; « la BCE estime, pointe ou attribue » est interdite pour cette source.',
+  ];
 }
 
 function outputSchema(type) {
@@ -100,6 +115,7 @@ function commonInstructions({ media, candidate, type, internalLinks, offer }) {
   // remains the publication gate; this target simply prevents near-miss drafts.
   const wordTarget = requirement.minimumWords + ({ news: 150, video: 250, guide: 400 }[type] || 0);
   const sources = sourcePacket(candidate, type === 'guide' ? 12_000 : 3_000);
+  const policyInstructions = sourcePolicyInstructions(sources);
   return [
     `Tu rédiges pour ${media.name} (${media.siteUrl}).`,
     `Rubrique obligatoire: ${requirement.section}.`,
@@ -115,6 +131,8 @@ function commonInstructions({ media, candidate, type, internalLinks, offer }) {
     '- Une source X non officielle ne suffit jamais à confirmer un fait.',
     '- Si les sources ne permettent pas un article exact et utile, retourne {"status":"blocked","reason":"..."}.',
     '',
+    ...policyInstructions,
+    ...(policyInstructions.length ? [''] : []),
     'RÈGLES ÉDITORIALES:',
     STYLE_GUIDE,
     '',
@@ -217,6 +235,7 @@ export function buildEditorialRepairPrompt({ media, candidate, contentType, draf
     '- Pour allonger, développe uniquement les explications, transitions, limites et conséquences déjà présentes.',
     '- Pour raccourcir, retire les répétitions sans supprimer les preuves ni les avertissements.',
     '- N’utilise aucun H1 et aucun tiret cadratin ou demi-cadratin.',
+    ...sourcePolicyInstructions(sourcePacket(candidate, contentType === 'guide' ? 12_000 : 3_000)),
     `ERREURS QA JSON: ${JSON.stringify(qa?.issues || [])}`,
     `BROUILLON À RÉPARER JSON: ${JSON.stringify(editableDraft)}`,
     `SCHÉMA JSON ATTENDU: ${JSON.stringify(outputSchema(contentType))}`,
@@ -306,12 +325,15 @@ export function normalizeDraft(payload, { contentType, candidate, media }) {
     sourceUrls,
     sourceItemIds,
     sourcePublishedAt,
+    editorialRevision: EDITORIAL_REVISION,
+    sourcePolicySnapshot: sourcePolicySnapshot(candidate),
     candidateQualification: {
       profile: candidate.qualificationProfile || 'strict',
       score: Number(candidate.score || 0),
       maxAgeHours: Number(candidate.maxAgeHours || 0),
       officialRequired: Boolean(candidate.officialRequired),
       corroborated: Boolean(candidate.corroborated),
+      rumor: Boolean(candidate.rumor),
     },
     offer: candidate.offer || null,
     claims: Array.isArray(payload?.claims) ? payload.claims : [],

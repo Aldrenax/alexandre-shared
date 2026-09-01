@@ -1,4 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
+import { SOURCE_POLICY_AUTHOR_VIEWS } from '../config/source-policies.mjs';
 import { CONTENT_REQUIREMENTS } from './editorial.mjs';
 import { thumbnailPublicationBlockers } from './thumbnail-qa.mjs';
 
@@ -42,6 +43,133 @@ function bannerIssues(draft, { requireBanner }) {
     ...(draft.banner.qa?.issues || []).map((entry) => issue(entry.code || 'thumbnail-qa-issue', entry.message || 'Échec QA miniature')),
   ];
   return [];
+}
+
+const AUTHOR_VIEWS_RESERVE = 'Cette analyse reflète le point de vue de ses auteurs et ne constitue pas une position officielle de la BCE.';
+const AUTHOR_ROLE = /(?<![\p{L}\p{N}_])(?:auteurs?|économistes?|chercheurs?|signataires?)(?![\p{L}\p{N}_])/iu;
+const AUTHOR_IDENTITY = /(?<![\p{L}\p{N}_])(?:auteurs?|économistes?|chercheurs?|signataires?)(?![\p{L}\p{N}_])[^.\n]{0,100}\b(?:BCE|Banque\s+centrale\s+européenne)\b|\b(?:BCE|Banque\s+centrale\s+européenne)\b[^.\n]{0,100}(?<![\p{L}\p{N}_])(?:auteurs?|économistes?|chercheurs?|signataires?)(?![\p{L}\p{N}_])/iu;
+const AUTHOR_ANALYSIS_VERB = /\b(?:analys(?:e|ent)|estim(?:e|ent)|attribu(?:e|ent)|considèr(?:e|ent)|jug(?:e|ent)|conclu(?:t|ent)|prévoi(?:t|ent)|anticip(?:e|ent)|affirm(?:e|ent)|expliqu(?:e|ent)|observ(?:e|ent)|constat(?:e|ent)|identifi(?:e|ent)|reli(?:e|ent)|imput(?:e|ent)|soutien(?:t|nent)|averti(?:t|ssent)|préconis(?:e|ent)|précis(?:e|ent)|indiqu(?:e|ent)|décri(?:t|vent)|insist(?:e|ent)|oppos(?:e|ent)|écri(?:t|vent)|soulign(?:e|ent)|avanc(?:e|ent))\b/iu;
+const ANALYTICAL_ASSERTION = /\b(?:estim(?:e|ent)|attribu(?:e|ent)|considèr(?:e|ent)|jug(?:e|ent)|conclu(?:t|ent)|prévoi(?:t|ent)|anticip(?:e|ent)|affirm(?:e|ent)|expliqu(?:e|ent)|identifi(?:e|ent)|reli(?:e|ent)|imput(?:e|ent)|soutien(?:t|nent)|averti(?:t|ssent)|préconis(?:e|ent)|soulign(?:e|ent)|avanc(?:e|ent)|résult(?:e|ent)|entraîn(?:e|ent)|caus(?:e|ent)|découl(?:e|ent)|(?:est|sont)\s+li(?:é|ée|és|ées))\b/iu;
+const INSTITUTIONAL_ATTRIBUTION = /\b(?:(?:la\s+)?(?:BCE|Banque\s+centrale\s+européenne|banque\s+centrale)|l['’]institution)\s+(?:pointe|estime|attribue|considère|juge|analyse|conclut|prévoit|anticipe|affirme|explique|observe|constate|identifie|relie|impute|soutient|avertit|préconise|précise|indique|décrit|insiste|oppose|voit|déclare|assure|avance|table|redoute|recommande|propose|évalue|annonce|a\s+(?:pointé|estimé|attribué|considéré|jugé|analysé|conclu|prévu|anticipé|affirmé|expliqué|observé|constaté|identifié|relié|imputé|soutenu|averti|préconisé|précisé|indiqué|décrit|insisté|opposé|déclaré|assuré|avancé|redouté|recommandé|proposé|évalué|annoncé))\b|\b(?:pour|selon|d['’]après|du\s+point\s+de\s+vue\s+de)\s+(?:la\s+)?(?:BCE|Banque\s+centrale\s+européenne|banque\s+centrale)\b|\b(?:la\s+)?position\s+(?:officielle\s+)?de\s+la\s+(?:BCE|Banque\s+centrale\s+européenne)\s+(?:est|serait|reste)\b/giu;
+const NEGATED_INSTITUTIONAL_ATTRIBUTION = /(?:(?:faux|erroné|erronée|inexact|inexacte|incorrect|incorrecte)\s+(?:de\s+)?(?:dire|affirmer|écrire|prétendre)\s+que|ne\s+(?:faut|doit)\s+pas\s+(?:dire|affirmer|écrire|prétendre)\s+que)\s*$/iu;
+
+function normalizeComparableText(value = '') {
+  return String(value)
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function proseSegments(value = '') {
+  return String(value)
+    .split(/[.!?]\s+|\n+|;\s*/u)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function publicDraftText(draft = {}) {
+  return [
+    draft.title,
+    draft.description,
+    draft.body,
+    draft.category,
+    draft.topic,
+    ...(draft.tags || []),
+    ...(draft.keyPoints || []),
+    ...(draft.faq || []).flatMap((entry) => [entry?.question, entry?.answer]),
+    ...(draft.internalLinkSuggestions || []).map((entry) => entry?.anchor),
+    draft.bannerBrief?.headline,
+    draft.bannerBrief?.concept,
+    draft.bannerBrief?.alt,
+    draft.banner?.alt,
+  ].filter((value) => typeof value === 'string' && value.trim());
+}
+
+function containsInstitutionalAttribution(value = '') {
+  for (const match of String(value).matchAll(INSTITUTIONAL_ATTRIBUTION)) {
+    const prefix = String(value).slice(Math.max(0, Number(match.index || 0) - 100), match.index);
+    if (!NEGATED_INSTITUTIONAL_ATTRIBUTION.test(prefix)) return true;
+  }
+  return false;
+}
+
+function containsAuthorAttribution(value = '', namedAuthors = [], { requireInstitutionalIdentity = true } = {}) {
+  const text = String(value);
+  if (!AUTHOR_ANALYSIS_VERB.test(text)) return false;
+  if (AUTHOR_IDENTITY.test(text)) return true;
+  const normalized = normalizeComparableText(text);
+  const namesAuthor = namedAuthors.some((author) => {
+    const name = normalizeComparableText(author);
+    return name.length >= 5 && normalized.includes(name);
+  });
+  if (namesAuthor) return true;
+  return !requireInstitutionalIdentity && AUTHOR_ROLE.test(text);
+}
+
+function segmentSupportedByClaim(segment, claims) {
+  const normalizedSegment = normalizeComparableText(segment);
+  if (normalizedSegment.length < 12) return false;
+  return claims.some((claim) => {
+    const normalizedClaim = normalizeComparableText(claim?.statement);
+    return normalizedClaim.length >= 20
+      && (normalizedSegment.includes(normalizedClaim) || normalizedClaim.includes(normalizedSegment));
+  });
+}
+
+function authorViewsIssues(draft, candidate) {
+  const sources = candidate?.sources || [];
+  const authorViewRefs = new Set(sources
+    .map((source, index) => source?.sourcePolicy === SOURCE_POLICY_AUTHOR_VIEWS ? `S${index + 1}` : null)
+    .filter(Boolean));
+  if (!authorViewRefs.size) return [];
+
+  const knownRefs = new Set(sources.map((_, index) => `S${index + 1}`));
+  const claims = Array.isArray(draft?.claims) ? draft.claims : [];
+  const authorViewClaims = claims.filter((claim) => (claim?.sourceRefs || []).some((ref) => authorViewRefs.has(ref)));
+  const nonAuthorViewClaims = claims.filter((claim) => Array.isArray(claim?.sourceRefs)
+    && claim.sourceRefs.length > 0
+    && claim.sourceRefs.every((ref) => knownRefs.has(ref) && !authorViewRefs.has(ref)));
+  const namedAuthors = sources
+    .filter((source) => source?.sourcePolicy === SOURCE_POLICY_AUTHOR_VIEWS)
+    .map((source) => source?.author)
+    .filter(Boolean);
+  const publicText = publicDraftText(draft)
+    .map((value) => value.split(AUTHOR_VIEWS_RESERVE).join(' '));
+  const publicSegments = publicText.flatMap(proseSegments);
+  const issues = [];
+
+  const invalidAuthorViewClaim = authorViewClaims.some((claim) => containsInstitutionalAttribution(claim?.statement));
+  const invalidPublicAttribution = publicSegments.some((segment) => containsInstitutionalAttribution(segment)
+    && !segmentSupportedByClaim(segment, nonAuthorViewClaims));
+  if (invalidAuthorViewClaim || invalidPublicAttribution) {
+    issues.push(issue(
+      'author-views-institutional-attribution',
+      'Une analyse signée ne peut pas être attribuée à la BCE comme position institutionnelle; attribuer les conclusions aux auteurs',
+    ));
+  }
+
+  const analyticalAuthorViewClaims = authorViewClaims
+    .filter((claim) => ANALYTICAL_ASSERTION.test(String(claim?.statement || '')));
+  const publicAttributionPresent = publicSegments.some((segment) => containsAuthorAttribution(segment, namedAuthors));
+  const authorViewClaimsAttributed = analyticalAuthorViewClaims
+    .every((claim) => containsAuthorAttribution(claim?.statement, namedAuthors, { requireInstitutionalIdentity: false }));
+  if (analyticalAuthorViewClaims.length > 0 && (!publicAttributionPresent || !authorViewClaimsAttributed)) {
+    issues.push(issue(
+      'author-views-attribution-missing',
+      'L’analyse doit être attribuée explicitement aux auteurs ou économistes du billet publié par la BCE',
+    ));
+  }
+  if (!String(draft?.body || '').includes(AUTHOR_VIEWS_RESERVE)) {
+    issues.push(issue(
+      'author-views-reserve-missing',
+      'Ajouter explicitement que l’analyse reflète le point de vue de ses auteurs et ne constitue pas une position officielle de la BCE',
+    ));
+  }
+  return issues;
 }
 
 export function qaDraft(draft, media, {
@@ -91,11 +219,12 @@ export function qaDraft(draft, media, {
   if (candidate?.corroborated === false) issues.push(issue('candidate-not-corroborated', 'Le candidat n’est pas corroboré'));
   if (candidate?.rumor) issues.push(issue('rumor-blocked', 'Une rumeur ne peut pas être publiée automatiquement'));
 
+  issues.push(...authorViewsIssues(draft, candidate));
   issues.push(...complianceIssues(draft, media));
   issues.push(...bannerIssues(draft, { requireBanner }));
   const errors = issues.filter((entry) => entry.severity === 'error');
   return {
-    version: 1,
+    version: 2,
     checkedAt: now.toISOString(),
     mediaSlug: media.slug,
     candidateId: draft?.candidateId || candidate?.id || null,
