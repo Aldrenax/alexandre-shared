@@ -64,6 +64,13 @@ export function validateRegistry({ media = MEDIA_NETWORK, sources = MEDIA_SOURCE
     }
     if (source?.type === 'page' && source.pageMode && !PAGE_MODES.has(source.pageMode)) errors.push(`source.pageMode invalide pour ${source?.id}: ${source.pageMode}`);
     if (source?.type === 'page' && source.pageDateMode && !PAGE_DATE_MODES.has(source.pageDateMode)) errors.push(`source.pageDateMode invalide pour ${source?.id}: ${source.pageDateMode}`);
+    if (source?.linkPathPattern) {
+      if (source.type !== 'page' || source.pageMode !== 'links') {
+        errors.push(`source.linkPathPattern réservé aux pages de liens pour ${source?.id}`);
+      } else {
+        try { new RegExp(source.linkPathPattern, 'u'); } catch { errors.push(`source.linkPathPattern invalide pour ${source?.id}`); }
+      }
+    }
     if (!Number.isInteger(source?.tier) || source.tier < 0 || source.tier > 4) errors.push(`source.tier invalide pour ${source?.id}`);
     try {
       new URL(source?.url);
@@ -73,6 +80,15 @@ export function validateRegistry({ media = MEDIA_NETWORK, sources = MEDIA_SOURCE
     if (!Array.isArray(source?.media) || source.media.length === 0) errors.push(`source.media vide pour ${source?.id}`);
     for (const slug of source?.media || []) {
       if (!mediaSlugs.has(slug)) errors.push(`source ${source.id}: média inconnu ${slug}`);
+    }
+    if (source?.topicRoutes) {
+      if (!source.official) errors.push(`source ${source.id}: topicRoutes exige une source officielle`);
+      if (!Array.isArray(source.topicRoutes) || source.topicRoutes.length === 0) {
+        errors.push(`source ${source.id}: topicRoutes invalide`);
+      }
+      for (const slug of source.topicRoutes || []) {
+        if (!source.media.includes(slug)) errors.push(`source ${source.id}: topicRoute hors media ${slug}`);
+      }
     }
     if (source?.official && source?.tier > 1) errors.push(`source officielle ${source?.id}: tier doit être 0 ou 1`);
     sourceIds.add(source?.id);

@@ -78,6 +78,19 @@ test('registre: le profil SEC exige un CIK et une liste de formulaires explicite
   assert.ok(errors.includes('source.apiForms vide pour tesla-sec-filings'));
 });
 
+test('registre: le routage thématique et le filtre de liens restent bornés aux sources officielles déclarées', () => {
+  const sources = MEDIA_SOURCES.map((source) => {
+    if (source.id === 'awin-news') return { ...source, official: false, topicRoutes: ['entreprise'] };
+    if (source.id === 'dge-actualites') return { ...source, linkPathPattern: '[' };
+    return source;
+  });
+  const errors = validateRegistry({ media: MEDIA_NETWORK, sources });
+
+  assert.ok(errors.includes('source awin-news: topicRoutes exige une source officielle'));
+  assert.ok(errors.includes('source awin-news: topicRoute hors media entreprise'));
+  assert.ok(errors.includes('source.linkPathPattern invalide pour dge-actualites'));
+});
+
 test('miniature article: adaptation image unique de youtube-thumbnail-imagegen et DA par chaîne', () => {
   const media = mediaBySlug('investissement');
   const draft = {
@@ -160,9 +173,10 @@ test('santé: une source officielle complémentaire indisponible ne bloque pas l
   assert.ok(!health.blockers.includes('required-sources-degraded'));
 });
 
-test('santé: Search Engine Watch reste un complément non bloquant aux sources SEO', () => {
-  const searchEngineWatch = MEDIA_SOURCES.find((source) => source.id === 'search-engine-watch');
-  assert.equal(searchEngineWatch.required, false);
+test('santé: les endpoints durablement bloqués ne sont plus interrogés', () => {
+  for (const sourceId of ['search-engine-watch', 'legifrance-api', 'urssaf-news', 'bfm-economie']) {
+    assert.equal(MEDIA_SOURCES.some((source) => source.id === sourceId), false, sourceId);
+  }
 });
 
 test('transcription YouTube: le proxy protégé est transmis à yt-dlp sans valeur par défaut', () => {

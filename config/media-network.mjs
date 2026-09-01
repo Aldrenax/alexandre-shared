@@ -82,7 +82,8 @@ export const MEDIA_NETWORK = Object.freeze([
     guideTopics: ['debuter', 'seo', 'outils', 'strategie', 'cas-pratique'],
     topicKeywords: [
       'SEO', 'Google Search', 'Search Console', 'affiliation', 'référencement',
-      'éditeur', 'monétisation', 'commission', 'programme partenaire',
+      'éditeur', 'éditeurs', 'monétisation', 'commission', 'commissions',
+      'programme partenaire', 'programme d’affiliation', 'marketing d’affiliation',
     ],
     xQueries: [
       'Google Search annonce officielle SEO Search Console documentation',
@@ -157,9 +158,11 @@ export const MEDIA_NETWORK = Object.freeze([
     newsCategories: ['actualite', 'analyse', 'juridique', 'fiscalite', 'gestion', 'creation', 'comptabilite'],
     guideTopics: ['creation', 'juridique', 'fiscalite', 'comptabilite', 'gestion'],
     topicKeywords: [
-      'entreprise', 'micro-entreprise', 'SASU', 'TVA', 'facturation',
-      'Urssaf', 'BOFiP', 'Légifrance', 'comptabilité', 'fiscalité',
-      'crédit d’impôt', 'C3IV',
+      'entreprise', 'entreprises', 'micro-entreprise', 'micro-entrepreneur',
+      'SASU', 'TVA', 'facturation', 'facture électronique', 'facturation électronique',
+      'Urssaf', 'cotisation', 'cotisations', 'BOFiP', 'Légifrance', 'INPI',
+      'comptabilité', 'fiscalité', 'société', 'sociétés', 'DSN', 'DUERP',
+      'guichet unique', 'formalités d’entreprise', 'crédit d’impôt', 'C3IV',
     ],
     xQueries: [
       'annonce officielle entreprise fiscalité Urssaf BOFiP Service Public France',
@@ -239,13 +242,17 @@ export const MEDIA_SOURCES = Object.freeze([
   source({ id: 'automobile-propre-tesla', name: 'Automobile Propre Tesla', type: 'rss', url: 'https://www.automobile-propre.com/tag/tesla/feed/', tier: 2, official: false, media: ['tesla-tech'] }),
 
   // SEO et affiliation
-  source({ id: 'google-search-doc-updates', name: 'Google Search Documentation Updates', type: 'rss', url: 'https://developers.google.com/search/updates/search_docs_updates.rss', tier: 0, official: true, media: ['affiliation'] }),
-  source({ id: 'google-search-status', name: 'Google Search Status Dashboard', type: 'rss', required: false, url: 'https://status.search.google.com/en/feed.atom?hl=fr', tier: 0, official: true, media: ['affiliation'] }),
+  // Ces deux flux sont des verticales Google Search explicites. Leur routage
+  // thématique ne dépend donc pas de la présence fortuite du mot "SEO" dans
+  // chaque titre (par exemple une mise à jour de politique ou de licence).
+  source({ id: 'google-search-doc-updates', name: 'Google Search Documentation Updates', type: 'rss', topicRoutes: ['affiliation'], url: 'https://developers.google.com/search/updates/search_docs_updates.rss', tier: 0, official: true, media: ['affiliation'] }),
+  source({ id: 'google-search-status', name: 'Google Search Status Dashboard', type: 'rss', topicRoutes: ['affiliation'], required: false, url: 'https://status.search.google.com/en/feed.atom?hl=fr', tier: 0, official: true, media: ['affiliation'] }),
+  source({ id: 'affilae-news', name: 'Affilae Actualités', type: 'rss', topicRoutes: ['affiliation'], required: false, url: 'https://affilae.com/fr/category/actualites/feed/', tier: 1, official: true, media: ['affiliation'] }),
+  source({ id: 'awin-news', name: 'Awin Actualités et événements', type: 'page', pageMode: 'links', linkPathPattern: '^/fr/actualites-et-evenements/post/', topicRoutes: ['affiliation'], required: false, url: 'https://www.awin.com/fr/actualites-et-evenements', tier: 1, official: true, media: ['affiliation'] }),
   source({ id: 'abondance', name: 'Abondance', type: 'rss', url: 'https://www.abondance.com/feed', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'webrankinfo', name: 'WebRankInfo', type: 'rss', url: 'https://www.webrankinfo.com/dossiers/feed', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'search-engine-journal', name: 'Search Engine Journal', type: 'rss', url: 'https://www.searchenginejournal.com/feed/', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'search-engine-land', name: 'Search Engine Land', type: 'rss', required: false, url: 'https://searchengineland.com/feed', tier: 2, official: false, media: ['affiliation'] }),
-  source({ id: 'search-engine-watch', name: 'Search Engine Watch', type: 'rss', required: false, url: 'https://searchenginewatch.com/feed/', tier: 2, official: false, media: ['affiliation'] }),
   source({ id: 'moz-blog', name: 'Moz Blog', type: 'rss', url: 'https://moz.com/posts/rss/blog', tier: 2, official: false, media: ['affiliation'] }),
 
   // Logiciels
@@ -266,15 +273,20 @@ export const MEDIA_SOURCES = Object.freeze([
 
   // Entreprise et réglementation
   source({ id: 'service-public-pro', name: 'Service Public Entreprendre', type: 'rss', url: 'https://www.service-public.fr/abonnements/rss/actu-actu-pro.rss', tier: 0, official: true, media: ['entreprise'] }),
-  source({ id: 'economie-actualites', name: 'Ministère de l’Économie — Actualités', type: 'rss', required: false, url: 'https://www.economie.gouv.fr/rss/toutesactualites', tier: 0, official: true, media: ['entreprise'] }),
+  // economie.gouv.fr répond avec un challenge Cloudflare depuis le collecteur.
+  // La DGE, rattachée au même ministère, expose une liste officielle accessible
+  // avec résumé et date dans chaque carte, sans contourner cette protection.
+  source({ id: 'dge-actualites', name: 'Direction générale des Entreprises — Actualités', type: 'page', pageMode: 'links', linkPathPattern: '^/la-dge/actualites/', required: false, url: 'https://www.entreprises.gouv.fr/la-dge/actualites', tier: 0, official: true, media: ['entreprise'] }),
   // La page détaillée du ministère peut refuser les requêtes du VPS alors
   // que cette fiche DGFiP reste accessible et documente le dispositif. Sa
   // date de modification constitue l'événement, pas sa date de création 2024.
   source({ id: 'impots-c3iv', name: 'impots.gouv.fr — C3IV', type: 'page', pageDateMode: 'modified', required: false, url: 'https://www.impots.gouv.fr/professionnel/questions/puis-je-pretendre-au-credit-dimpot-au-titre-des-investissements-en-faveur', tier: 0, official: true, media: ['entreprise'] }),
   source({ id: 'bofip-rss', name: 'BOFiP Flux RSS', type: 'rss', required: false, url: 'https://bofip.impots.gouv.fr/bofip/ext/rss/last-rss.xml', tier: 1, official: true, media: ['entreprise'] }),
-  source({ id: 'legifrance-api', name: 'Légifrance Open Data et API', type: 'page', pageMode: 'reference', required: false, url: 'https://www.legifrance.gouv.fr/contenu/pied-de-page/open-data-et-api', tier: 1, official: true, media: ['entreprise'] }),
-  source({ id: 'urssaf-news', name: 'Urssaf Actualités', type: 'page', pageMode: 'links', required: false, url: 'https://www.urssaf.fr/accueil/actualites.html', tier: 1, official: true, media: ['entreprise'] }),
-  source({ id: 'bfm-economie', name: 'BFM Économie', type: 'rss', url: 'https://www.bfmtv.com/rss/economie/', tier: 2, official: false, media: ['entreprise'] }),
+  source({ id: 'inpi-news', name: 'INPI Actualités', type: 'rss', required: false, url: 'https://www.inpi.fr/rss.xml', tier: 1, official: true, media: ['entreprise'] }),
+  // Légifrance et l'Urssaf renvoient durablement 403 depuis le VPS. La page
+  // Entreprendre Service Public reste une source primaire DILA accessible et
+  // couvre notamment les changements Urssaf, fiscaux et réglementaires.
+  source({ id: 'service-public-pro-page', name: 'Service Public Entreprendre — Page actualités', type: 'page', pageMode: 'links', linkPathPattern: '^/actualites/', required: false, url: 'https://entreprendre.service-public.gouv.fr/actualites', tier: 0, official: true, media: ['entreprise'] }),
 ]);
 
 export const MEDIA_ENGINE_DEFAULTS = Object.freeze({

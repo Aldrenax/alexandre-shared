@@ -48,6 +48,13 @@ function failureDetails(error) {
       diagnostic: 'La réponse a été reçue mais son format ne correspond plus au parseur attendu.',
     };
   }
+  if (error?.sourceStage === 'challenge') {
+    return {
+      kind: 'anti-bot-challenge',
+      status: null,
+      diagnostic: 'La source a répondu avec une page de protection anti-bot au lieu du contenu attendu. Utiliser un flux ou un fallback officiel accessible, sans contourner la protection.',
+    };
+  }
   if (['AbortError', 'TimeoutError'].includes(error?.name) || /timed?\s*out|timeout/i.test(String(error?.message || ''))) {
     return {
       kind: 'timeout',
@@ -66,6 +73,7 @@ function quarantineRetryHours(source, kind) {
   const configured = Number(source.quarantineRetryHours);
   if (Number.isFinite(configured) && configured > 0) return configured;
   if (kind === 'http-forbidden') return 12;
+  if (kind === 'anti-bot-challenge') return 12;
   if (kind === 'http-rate-limited') return 2;
   return 1;
 }
@@ -108,7 +116,7 @@ function decodeHtml(value = '') {
     .replace(/<[^>]+>/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#0*39;|&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ')
@@ -157,17 +165,27 @@ function pageLinks(html, source) {
   const seen = new Set();
   const sourceUrl = new URL(source.url);
   const sourcePage = pageIdentity(sourceUrl);
-  for (const match of withoutBoilerplate(html).matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+  const cleaned = withoutBoilerplate(html);
+  const matches = [...cleaned.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  const linkPathPattern = source.linkPathPattern ? new RegExp(source.linkPathPattern, 'u') : null;
+  for (const [index, match] of matches.entries()) {
     const title = decodeHtml(match[2]);
     if (title.length < 25 || title.length > 240) continue;
     let url;
     try { url = new URL(match[1], sourceUrl); } catch { continue; }
     if (!/^https?:$/.test(url.protocol)) continue;
     if (url.hostname.replace(/^www\./, '') !== sourceUrl.hostname.replace(/^www\./, '')) continue;
+    if (linkPathPattern && !linkPathPattern.test(url.pathname)) continue;
     url.hash = '';
     const key = url.toString();
     if (seen.has(key) || pageIdentity(url) === sourcePage) continue;
     seen.add(key);
+    // Les index officiels Awin, DGE et Service Public exposent
+    // la date et le résumé juste après le lien de titre. Le segment est borné
+    // par le lien suivant pour ne jamais emprunter la date d'une autre carte.
+    const contextStart = Number(match.index || 0) + match[0].length;
+    const contextEnd = Math.min(matches[index + 1]?.index ?? cleaned.length, contextStart + 4_000);
+    const context = cleaned.slice(contextStart, contextEnd);
     items.push({
       id: `${source.id}:${digest(key).slice(0, 16)}`,
       sourceId: source.id,
@@ -175,10 +193,12 @@ function pageLinks(html, source) {
       sourceOfficial: source.official,
       title,
       url: key,
-      excerpt: '',
-      publishedAt: null,
+      excerpt: decodeHtml(context).slice(0, 1_200),
+      publishedAt: contextualPublishedAt(context),
       author: source.name,
       media: source.media,
+      topicRoutes: source.topicRoutes || [],
+      pageDateMode: source.pageDateMode || 'published',
       kind: 'official-page-link',
     });
     if (items.length >= 30) break;
@@ -215,6 +235,65 @@ function validCompactDate(value, fallback = null) {
     return fallback;
   }
   return date.toISOString();
+}
+
+const FRENCH_MONTHS = Object.freeze({
+  janvier: 1,
+  fevrier: 2,
+  mars: 3,
+  avril: 4,
+  mai: 5,
+  juin: 6,
+  juillet: 7,
+  aout: 8,
+  septembre: 9,
+  octobre: 10,
+  novembre: 11,
+  decembre: 12,
+});
+
+function validFrenchDate(value, fallback = null) {
+  const normalized = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+  const match = normalized.match(/^(\d{1,2})\s+([a-z]+)\s+(\d{4})$/);
+  if (!match || !FRENCH_MONTHS[match[2]]) return fallback;
+  const day = Number(match[1]);
+  const month = FRENCH_MONTHS[match[2]];
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return fallback;
+  }
+  return date.toISOString();
+}
+
+function contextualPublishedAt(html = '') {
+  const declared = html.match(/<time\b[^>]*datetime=["']([^"']+)/i)?.[1];
+  if (declared) {
+    const parsed = validDate(declared);
+    if (parsed) return parsed;
+  }
+  const readable = decodeHtml(html);
+  const labelled = readable.match(/(?:publi(?:é|e)|écrit|mise?\s+à\s+jour)\s+le\s+(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
+  if (labelled) {
+    const parsed = validDayFirstDate(labelled);
+    if (parsed) return parsed;
+  }
+  const french = readable.match(/(?:publi(?:é|e)|écrit|mise?\s+à\s+jour)\s+le\s+(\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4})/i)?.[1];
+  if (french) return validFrenchDate(french);
+  // Les cartes DGE affichent la date auprès d'une icône calendrier, sans
+  // libellé textuel. Le contexte est déjà borné à la carte courante.
+  const unlabelledFrench = readable.match(/\b(\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4})\b/i)?.[1];
+  return validFrenchDate(unlabelledFrench);
+}
+
+function isAntiBotChallenge(text = '') {
+  const sample = String(text).slice(0, 120_000);
+  return /<title[^>]*>\s*Just a moment(?:\.\.\.)?\s*<\/title>/i.test(sample)
+    || /(?:cf-chl-|cdn-cgi\/challenge-platform|challenge-platform\/scripts)/i.test(sample);
 }
 
 function rssPublishedAt(item, source) {
@@ -283,9 +362,24 @@ async function parseRss(text, source) {
       publishedAt: rssPublishedAt(item, source),
       author: decodeHtml(item.creator || item.author || ''),
       media: source.media,
+      topicRoutes: source.topicRoutes || [],
       kind: 'news',
     };
   }).filter((item) => item.title && item.url);
+}
+
+function declaredPageDates(html = '') {
+  const declaredPublishedAt = validDate(
+    html.match(/<meta[^>]+property=["']article:published_time["'][^>]+content=["']([^"']+)/i)?.[1]
+      || html.match(/"datePublished"\s*:\s*"([^"]+)"/i)?.[1],
+  );
+  const readableText = decodeHtml(withoutBoilerplate(html));
+  const visibleModifiedAt = readableText.match(/modifi(?:é|e)\s+le\s+(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
+  const declaredModifiedAt = validDate(
+    html.match(/<meta[^>]+property=["']article:modified_time["'][^>]+content=["']([^"']+)/i)?.[1]
+      || html.match(/"dateModified"\s*:\s*"([^"]+)"/i)?.[1],
+  ) || validDayFirstDate(visibleModifiedAt);
+  return { declaredPublishedAt, declaredModifiedAt };
 }
 
 function pageMetadata(html, source, previous = {}) {
@@ -301,16 +395,7 @@ function pageMetadata(html, source, previous = {}) {
     html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)/i)?.[1]
       || '',
   );
-  const declaredPublishedAt = validDate(
-    html.match(/<meta[^>]+property=["']article:published_time["'][^>]+content=["']([^"']+)/i)?.[1]
-      || html.match(/"datePublished"\s*:\s*"([^"]+)"/i)?.[1],
-  );
-  const readableText = decodeHtml(withoutBoilerplate(html));
-  const visibleModifiedAt = readableText.match(/modifi(?:é|e)\s+le\s+(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
-  const declaredModifiedAt = validDate(
-    html.match(/<meta[^>]+property=["']article:modified_time["'][^>]+content=["']([^"']+)/i)?.[1]
-      || html.match(/"dateModified"\s*:\s*"([^"]+)"/i)?.[1],
-  ) || validDayFirstDate(visibleModifiedAt);
+  const { declaredPublishedAt, declaredModifiedAt } = declaredPageDates(html);
   const publishedAt = source.pageDateMode === 'modified'
     ? declaredModifiedAt || declaredPublishedAt
     : declaredPublishedAt;
@@ -333,6 +418,8 @@ function pageMetadata(html, source, previous = {}) {
       publishedAt,
       author: source.name,
       media: source.media,
+      topicRoutes: source.topicRoutes || [],
+      pageDateMode: source.pageDateMode || 'published',
       kind: 'official-page-change',
         }] : [],
   };
@@ -359,10 +446,15 @@ export async function enrichCandidateEvidence(candidate, {
       const evidenceText = /application\/json/i.test(contentType)
         ? String(text).slice(0, 12_000)
         : extractBalancedEvidence(text, 12_000);
+      const declaredDates = /text\/html/i.test(contentType) ? declaredPageDates(text) : {};
+      const declaredAt = source.pageDateMode === 'modified'
+        ? declaredDates.declaredModifiedAt || declaredDates.declaredPublishedAt
+        : declaredDates.declaredPublishedAt;
       if (evidenceText.length >= 200) {
         enriched = {
           ...enriched,
           excerpt: evidenceText,
+          publishedAt: enriched.publishedAt || declaredAt || null,
           evidenceHash: digest(evidenceText),
           evidenceRetrievedAt: new Date().toISOString(),
           evidenceStatus: 'available',
@@ -376,8 +468,13 @@ export async function enrichCandidateEvidence(candidate, {
     }
     sources.push(enriched);
   }
+  const sourceDates = sources
+    .map((source) => validDate(source.publishedAt))
+    .filter(Boolean)
+    .sort();
   return {
     ...candidate,
+    publishedAt: candidate.publishedAt || sourceDates.at(-1) || null,
     sources,
     evidenceAvailableCount: sources.filter((source) => source.evidenceStatus === 'available').length,
     evidenceEnrichedAt: new Date().toISOString(),
@@ -455,6 +552,7 @@ function apiItems(payload, source) {
         || validDayFirstDate(item.ReportReceivedDate),
       author: source.name,
       media: source.media,
+      topicRoutes: source.topicRoutes || [],
       kind: 'official-api',
       raw: item,
     };
@@ -496,6 +594,11 @@ export async function collectSource(source, {
 
     const contentType = response.headers.get('content-type') || '';
     const text = await response.text();
+    if (isAntiBotChallenge(text)) {
+      const challengeError = new Error('protection anti-bot détectée dans la réponse');
+      challengeError.sourceStage = 'challenge';
+      throw challengeError;
+    }
     let items = [];
     let contentHash = digest(text);
     if (source.type === 'rss') {

@@ -190,6 +190,48 @@ test('scoring: deux sources secondaires indépendantes, fraîches et thématique
   assert.equal(result.offer, null);
   assert.equal(result.score, 70);
   assert.equal(result.status, 'qualified');
+  assert.equal(result.scoreBreakdown.total, 70);
+  assert.deepEqual(result.scoreBreakdown, {
+    authority: 18,
+    corroboration: 24,
+    topicality: 10,
+    freshness: 18,
+    commercialFit: 0,
+    rumorPenalty: 0,
+    missingOfficialPenalty: 0,
+    total: 70,
+  });
+});
+
+test('diagnostic de preuve: une source secondaire seule ne prétend pas exiger une source officielle', () => {
+  const candidate = secondaryCandidate();
+  candidate.sources = candidate.sources.slice(0, 1);
+  const result = qualifyCandidate(candidate, media({ risk: 'commercial' }), { now: NOW });
+
+  assert.equal(result.proofRequirement, 'official-or-two-independent-domains');
+  assert.ok(result.blockers.includes('preuve-insuffisante'));
+  assert.ok(!result.blockers.includes('source-officielle-requise'));
+  assert.equal(result.corroborated, false);
+});
+
+test('routage officiel: une verticale explicitement bornée reste thématique sans mot-clé fortuit', () => {
+  const title = 'Updated the European Search Dataset Licensing Program page';
+  const candidate = {
+    id: 'google-doc-update', title, primaryUrl: 'https://developers.google.com/search/updates',
+    publishedAt: '2026-08-14T08:00:00.000Z',
+    sources: [{
+      sourceId: 'google-search-doc-updates', tier: 0, official: true, title,
+      url: 'https://developers.google.com/search/updates', excerpt: 'Eligibility criteria updated.',
+      publishedAt: '2026-08-14T08:00:00.000Z', topicRoutes: ['affiliation'],
+    }],
+  };
+  const result = qualifyCandidate(candidate, mediaBySlug('affiliation'), { now: NOW });
+
+  assert.deepEqual(result.keywordMatches, []);
+  assert.deepEqual(result.sourceRouteMatches, ['google-search-doc-updates']);
+  assert.equal(result.topicMatched, true);
+  assert.equal(result.score, 78);
+  assert.equal(result.status, 'qualified');
 });
 
 test('taxonomie: GPT et les paiements BCE sont reconnus sans sous-chaîne ambiguë', () => {
@@ -262,4 +304,17 @@ test("taxonomie entreprise: C3IV et crédit d'impôt sont ciblés sans ouvrir l'
   assert.equal(incomeTax.status, 'rejected');
   assert.deepEqual(incomeTax.keywordMatches, []);
   assert.ok(incomeTax.blockers.includes('hors-thématique'));
+
+  const companyFormalities = qualifyCandidate(
+    official(
+      "L'INPI simplifie les formalités d'entreprise au guichet unique pour les sociétés",
+      'https://www.inpi.fr/actualites/guichet-unique',
+    ),
+    targetMedia,
+    { now: NOW },
+  );
+  assert.equal(companyFormalities.status, 'qualified');
+  assert.ok(companyFormalities.keywordMatches.includes('INPI'));
+  assert.ok(companyFormalities.keywordMatches.includes('formalités d’entreprise'));
+  assert.ok(companyFormalities.keywordMatches.includes('guichet unique'));
 });

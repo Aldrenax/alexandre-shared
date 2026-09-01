@@ -253,6 +253,8 @@ export function clusterCandidates(items = [], threshold = 0.46) {
       url: canonicalUrl(item.url),
       excerpt: item.excerpt || '',
       publishedAt: item.publishedAt || null,
+      topicRoutes: Array.isArray(item.topicRoutes) ? [...new Set(item.topicRoutes)] : [],
+      pageDateMode: item.pageDateMode || null,
       kind: item.kind || 'news',
       itemId: item.id != null ? String(item.id) : null,
     });
@@ -281,6 +283,13 @@ function candidateText(candidate = {}) {
 function keywordMatches(candidate, media) {
   const haystack = candidateText(candidate);
   return (media.topicKeywords || []).filter((keyword) => textMatchesKeyword(haystack, keyword));
+}
+
+function sourceRouteMatches(candidate, media) {
+  return [...new Set((candidate.sources || [])
+    .filter((source) => source.official && Number(source.tier) <= 1)
+    .filter((source) => Array.isArray(source.topicRoutes) && source.topicRoutes.includes(media.slug))
+    .map((source) => source.sourceId))];
 }
 
 export function candidateRequiresOfficialEvidence(candidate, media) {
@@ -324,6 +333,8 @@ export function qualifyCandidate(candidate, media, {
     try { return new URL(source.url).hostname.replace(/^www\./, ''); } catch { return source.sourceId; }
   }));
   const matches = keywordMatches(candidate, media);
+  const routedSources = sourceRouteMatches(candidate, media);
+  const topical = matches.length > 0 || routedSources.length > 0;
   const age = ageHours(candidate.publishedAt, now);
   const maximumAge = Number.isFinite(Number(maxAgeHours)) && Number(maxAgeHours) >= 0
     ? Number(maxAgeHours)
@@ -334,22 +345,32 @@ export function qualifyCandidate(candidate, media, {
   const corroborated = officialRequired ? official.length > 0 : hasEvidence;
   const offer = matchOffer(candidate, offers, media.slug);
 
+  const authorityPoints = official.length ? 36 : sources.some((source) => source.tier === 2) ? 18 : 8;
+  const corroborationPoints = independentDomains.size >= 2 ? 24 : official.length ? 14 : 8;
+  const topicalityPoints = topical ? Math.min(20, 10 + ((Math.max(1, matches.length) - 1) * 5)) : 0;
+  const freshnessPoints = age == null ? 10 : age <= 24 ? 18 : age <= maximumAge ? 10 : 2;
+  const commercialFitPoints = offer ? 10 : 0;
+  const rumorPenalty = rumor ? -30 : 0;
+  const missingOfficialPenalty = officialRequired && !official.length ? -25 : 0;
   let score = 0;
   // Une annonce officielle et réellement thématique constitue déjà une preuve
   // exploitable. Les sources secondaires restent soumises à corroboration.
-  score += official.length ? 36 : sources.some((source) => source.tier === 2) ? 18 : 8;
-  score += independentDomains.size >= 2 ? 24 : official.length ? 14 : 8;
-  score += matches.length ? Math.min(20, 10 + ((matches.length - 1) * 5)) : 0;
-  score += age == null ? 10 : age <= 24 ? 18 : age <= maximumAge ? 10 : 2;
-  score += offer ? 10 : 0;
-  if (rumor) score -= 30;
-  if (officialRequired && !official.length) score -= 25;
+  score += authorityPoints;
+  score += corroborationPoints;
+  score += topicalityPoints;
+  score += freshnessPoints;
+  score += commercialFitPoints;
+  score += rumorPenalty;
+  score += missingOfficialPenalty;
   score = Math.max(0, Math.min(100, score));
 
   const blockers = [];
-  if (!matches.length) blockers.push('hors-thématique');
+  if (!topical) blockers.push('hors-thématique');
   if (!hasEvidence) blockers.push('preuve-insuffisante');
-  if (!corroborated) blockers.push('source-officielle-requise');
+  // Une source officielle n'est obligatoire que pour les verticales à risque
+  // légal/fiscal/financier. Pour les autres, deux domaines indépendants sont
+  // une issue valide : le diagnostic ne doit pas prétendre le contraire.
+  if (officialRequired && !official.length) blockers.push('source-officielle-requise');
   if (rumor) blockers.push('rumeur-non-corroborée');
   if (age != null && age > maximumAge) blockers.push('candidat-trop-ancien');
   if (score < minimumScore) blockers.push(`score-inférieur-à-${minimumScore}`);
@@ -362,9 +383,12 @@ export function qualifyCandidate(candidate, media, {
     ageHours: age,
     maxAgeHours: maximumAge,
     keywordMatches: matches,
+    sourceRouteMatches: routedSources,
+    topicMatched: topical,
     officialSourceCount: official.length,
     independentSourceCount: independentDomains.size,
     officialRequired,
+    proofRequirement: officialRequired ? 'official' : 'official-or-two-independent-domains',
     corroborated,
     rumor,
     offer: offer ? {
@@ -375,6 +399,16 @@ export function qualifyCandidate(candidate, media, {
     } : null,
     status: blockers.length ? 'rejected' : 'qualified',
     blockers,
+    scoreBreakdown: {
+      authority: authorityPoints,
+      corroboration: corroborationPoints,
+      topicality: topicalityPoints,
+      freshness: freshnessPoints,
+      commercialFit: commercialFitPoints,
+      rumorPenalty,
+      missingOfficialPenalty,
+      total: score,
+    },
     qualifiedAt: now.toISOString(),
   };
 }

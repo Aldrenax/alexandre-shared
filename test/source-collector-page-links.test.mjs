@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { MEDIA_SOURCES } from '../config/media-network.mjs';
-import { collectSource } from '../media/source-collector.mjs';
+import { collectSource, enrichCandidateEvidence } from '../media/source-collector.mjs';
 
 test('collecteur page: ignore la page source et ses variantes query ou langue', async () => {
   const source = {
@@ -47,26 +47,81 @@ test('registre sources: Google Search Central utilise le RSS officiel', () => {
   assert.equal(googleSearchBlog.url, 'https://developers.google.com/search/blog/feed.xml');
 });
 
-test('registre sources: les flux officiels complémentaires sont RSS et optionnels', () => {
+test('registre sources: les flux officiels complémentaires restent optionnels', () => {
   const googleSearchStatus = MEDIA_SOURCES.find((source) => source.id === 'google-search-status');
-  const economieActualites = MEDIA_SOURCES.find((source) => source.id === 'economie-actualites');
+  const dgeActualites = MEDIA_SOURCES.find((source) => source.id === 'dge-actualites');
   const bofip = MEDIA_SOURCES.find((source) => source.id === 'bofip-rss');
 
-  assert.deepEqual(
-    [googleSearchStatus, economieActualites, bofip].map((source) => ({
-      type: source.type,
-      required: source.required,
-      official: source.official,
-    })),
-    [
-      { type: 'rss', required: false, official: true },
-      { type: 'rss', required: false, official: true },
-      { type: 'rss', required: false, official: true },
-    ],
-  );
+  assert.deepEqual([googleSearchStatus, dgeActualites, bofip].map((source) => source.required), [false, false, false]);
+  assert.equal([googleSearchStatus, dgeActualites, bofip].every((source) => source.official), true);
+  assert.equal(googleSearchStatus.type, 'rss');
+  assert.equal(dgeActualites.type, 'page');
+  assert.equal(dgeActualites.pageMode, 'links');
   assert.equal(googleSearchStatus.url, 'https://status.search.google.com/en/feed.atom?hl=fr');
-  assert.equal(economieActualites.url, 'https://www.economie.gouv.fr/rss/toutesactualites');
+  assert.equal(dgeActualites.url, 'https://www.entreprises.gouv.fr/la-dge/actualites');
   assert.equal(bofip.url, 'https://bofip.impots.gouv.fr/bofip/ext/rss/last-rss.xml');
+});
+
+test('registre sources: les fallbacks officiels Affiliation et Entreprise sont accessibles sans endpoint bloqué', () => {
+  const affilae = MEDIA_SOURCES.find((source) => source.id === 'affilae-news');
+  const awin = MEDIA_SOURCES.find((source) => source.id === 'awin-news');
+  const inpi = MEDIA_SOURCES.find((source) => source.id === 'inpi-news');
+  const dge = MEDIA_SOURCES.find((source) => source.id === 'dge-actualites');
+  const servicePublicPage = MEDIA_SOURCES.find((source) => source.id === 'service-public-pro-page');
+
+  assert.equal(affilae.url, 'https://affilae.com/fr/category/actualites/feed/');
+  assert.deepEqual(affilae.topicRoutes, ['affiliation']);
+  assert.equal(awin.linkPathPattern, '^/fr/actualites-et-evenements/post/');
+  assert.deepEqual(awin.topicRoutes, ['affiliation']);
+  assert.equal(inpi.url, 'https://www.inpi.fr/rss.xml');
+  assert.equal(dge.linkPathPattern, '^/la-dge/actualites/');
+  assert.equal(servicePublicPage.url, 'https://entreprendre.service-public.gouv.fr/actualites');
+});
+
+test('collecteur page: conserve la date et le résumé de la carte officielle ciblée', async () => {
+  const source = {
+    id: 'dge-actualites', name: 'DGE', type: 'page', pageMode: 'links',
+    linkPathPattern: '^/la-dge/actualites/', url: 'https://www.entreprises.gouv.fr/la-dge/actualites',
+    tier: 0, official: true, media: ['entreprise'],
+  };
+  const html = `<main>
+    <a href="/espace-entreprises">Un dossier permanent suffisamment long mais hors actualités</a>
+    <a href="/la-dge/actualites/facturation-electronique-septembre">La facturation d&#039;entreprise entre en vigueur pour les professionnels</a>
+    <p>Toutes les entreprises doivent pouvoir recevoir une facture électronique.</p><p>31 août 2026</p>
+    <a href="/la-dge/actualites/autre-sujet">Une deuxième actualité officielle sans confusion de date</a>
+    <p>20 août 2026</p>
+  </main>`;
+  const response = {
+    ok: true, status: 200, url: source.url,
+    headers: new Headers({ 'content-type': 'text/html' }), text: async () => html,
+  };
+
+  const collected = await collectSource(source, { fetchImpl: async () => response });
+
+  assert.equal(collected.items.length, 2);
+  assert.equal(collected.items[0].title, "La facturation d'entreprise entre en vigueur pour les professionnels");
+  assert.equal(collected.items[0].publishedAt, '2026-08-31T00:00:00.000Z');
+  assert.match(collected.items[0].excerpt, /Toutes les entreprises/u);
+  assert.equal(collected.items[1].publishedAt, '2026-08-20T00:00:00.000Z');
+});
+
+test('collecteur page: refuse un challenge anti-bot HTTP 200 comme contenu sain', async () => {
+  const source = {
+    id: 'protected-official', name: 'Source protégée', type: 'page', pageMode: 'links',
+    url: 'https://official.example/actualites', tier: 0, official: true, media: ['entreprise'],
+  };
+  const response = {
+    ok: true, status: 200, url: source.url,
+    headers: new Headers({ 'content-type': 'text/html' }),
+    text: async () => '<html><head><title>Just a moment...</title></head><body><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body></html>',
+  };
+
+  const collected = await collectSource(source, { fetchImpl: async () => response });
+
+  assert.equal(collected.status, 'degraded');
+  assert.equal(collected.errorKind, 'anti-bot-challenge');
+  assert.equal(collected.items.length, 0);
+  assert.match(collected.diagnostic, /sans contourner/u);
 });
 
 test('registre sources: la fiche C3IV utilise sa modification officielle comme date', () => {
@@ -373,4 +428,29 @@ test('collecteur: retente une source quarantainée après temporisation et réin
   assert.equal(recovered.httpStatus, 200);
   assert.equal(recovered.lastAttemptAt, '2026-09-01T08:01:00.000Z');
   assert.equal(recovered.errorKind, undefined);
+});
+
+test('enrichissement: récupère la date déclarée de la page sans utiliser la date de collecte', async () => {
+  const html = `<html><head>
+    <meta property="article:published_time" content="2026-08-31T14:30:00+02:00">
+  </head><body><main><h1>Nouvelle obligation de facturation électronique</h1>
+    <p>${'Le texte officiel précise le calendrier et les entreprises concernées. '.repeat(8)}</p>
+  </main></body></html>`;
+  const response = {
+    ok: true, status: 200, url: 'https://official.example/actualites/facturation',
+    headers: new Headers({ 'content-type': 'text/html' }), text: async () => html,
+  };
+  const candidate = {
+    title: 'Facturation électronique', publishedAt: null,
+    sources: [{
+      sourceId: 'official', tier: 0, official: true,
+      url: response.url, publishedAt: null, pageDateMode: 'published',
+    }],
+  };
+
+  const enriched = await enrichCandidateEvidence(candidate, { fetchImpl: async () => response });
+
+  assert.equal(enriched.sources[0].publishedAt, '2026-08-31T12:30:00.000Z');
+  assert.equal(enriched.publishedAt, '2026-08-31T12:30:00.000Z');
+  assert.equal(enriched.sources[0].evidenceStatus, 'available');
 });

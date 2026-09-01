@@ -534,6 +534,8 @@ export function buildQualifiedCandidatePool({
         url,
         excerpt: source.excerpt || '',
         publishedAt: source.publishedAt || sanitized.publishedAt || null,
+        topicRoutes: Array.isArray(source.topicRoutes) ? source.topicRoutes : [],
+        pageDateMode: source.pageDateMode || null,
         media: [target.slug],
         kind: source.kind || 'news',
       });
