@@ -1145,6 +1145,7 @@ test('publication VPS: le CLI conserve le résultat pour enregistrer le cycle', 
   assert.match(cli, /result = draftPath\s*\? await worker\.publishDraftPath/);
   assert.match(cli, /output\(result\);/);
   assert.match(cli, /classifyRunOutcome\(command, result/);
+  assert.match(cli, /'wordpress-health'/);
 });
 
 test('publication: fraîcheur immédiate en journée et report au matin pendant la nuit', () => {

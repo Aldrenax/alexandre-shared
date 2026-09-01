@@ -147,7 +147,7 @@ try {
     console.error('Usage: alexandre-media-engine <validate|preflight|collect|research|video|guide|curate|publish|wordpress-health|wordpress-shadow|wordpress-publish|publication-queue-sync|publication-status|health|monitor|run> [--media slug] [--draft path] [--limit n] [--since ISO] [--dry-run] [--apply] [--json]');
     process.exitCode = 2;
   }
-  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'wordpress-shadow', 'wordpress-publish', 'run'].includes(command)) {
+  if (!dryRun && result !== undefined && !result?.skipped && ['collect', 'research', 'video', 'guide', 'curate', 'publish', 'wordpress-health', 'wordpress-shadow', 'wordpress-publish', 'run'].includes(command)) {
     engine.store.initialize();
     const outcome = classifyRunOutcome(command, result, { mediaSlug: mediaSlug || null });
     engine.store.recordRun(command, outcome.receipt);
