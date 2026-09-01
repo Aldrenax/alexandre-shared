@@ -296,6 +296,13 @@ function isAntiBotChallenge(text = '') {
     || /(?:cf-chl-|cdn-cgi\/challenge-platform|challenge-platform\/scripts)/i.test(sample);
 }
 
+function rejectAntiBotChallenge(text = '') {
+  if (!isAntiBotChallenge(text)) return;
+  const challengeError = new Error('protection anti-bot détectée dans la réponse');
+  challengeError.sourceStage = 'challenge';
+  throw challengeError;
+}
+
 function rssPublishedAt(item, source) {
   const declared = validDate(item.isoDate || item.pubDate);
   if (declared || source.id !== 'bofip-rss') return declared;
@@ -443,6 +450,7 @@ export async function enrichCandidateEvidence(candidate, {
       const contentType = response.headers.get('content-type') || '';
       if (!/text\/html|text\/plain|application\/json/i.test(contentType)) throw new Error(`contenu non textuel: ${contentType}`);
       const text = await response.text();
+      rejectAntiBotChallenge(text);
       const evidenceText = /application\/json/i.test(contentType)
         ? String(text).slice(0, 12_000)
         : extractBalancedEvidence(text, 12_000);
@@ -594,11 +602,7 @@ export async function collectSource(source, {
 
     const contentType = response.headers.get('content-type') || '';
     const text = await response.text();
-    if (isAntiBotChallenge(text)) {
-      const challengeError = new Error('protection anti-bot détectée dans la réponse');
-      challengeError.sourceStage = 'challenge';
-      throw challengeError;
-    }
+    rejectAntiBotChallenge(text);
     let items = [];
     let contentHash = digest(text);
     if (source.type === 'rss') {

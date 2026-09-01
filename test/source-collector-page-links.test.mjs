@@ -454,3 +454,28 @@ test('enrichissement: récupère la date déclarée de la page sans utiliser la 
   assert.equal(enriched.publishedAt, '2026-08-31T12:30:00.000Z');
   assert.equal(enriched.sources[0].evidenceStatus, 'available');
 });
+
+test('enrichissement: une longue page de challenge HTTP 200 ne devient jamais une preuve disponible', async () => {
+  const html = `<html><head><title>Just a moment...</title></head><body>
+    <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+    <p>${'Checking your browser before accessing the official source. '.repeat(20)}</p>
+  </body></html>`;
+  const response = {
+    ok: true, status: 200, url: 'https://official.example/protected',
+    headers: new Headers({ 'content-type': 'text/html' }), text: async () => html,
+  };
+  const candidate = {
+    title: 'Nouvelle règle officielle', publishedAt: null,
+    sources: [{
+      sourceId: 'protected-official', tier: 0, official: true,
+      url: response.url, publishedAt: null, pageDateMode: 'published',
+    }],
+  };
+
+  const enriched = await enrichCandidateEvidence(candidate, { fetchImpl: async () => response });
+
+  assert.equal(enriched.sources[0].evidenceStatus, 'unavailable');
+  assert.match(enriched.sources[0].evidenceError, /protection anti-bot détectée/u);
+  assert.equal(enriched.sources[0].evidenceHash, undefined);
+  assert.equal(enriched.evidenceAvailableCount, 0);
+});
