@@ -202,7 +202,14 @@ function independentVisualIssues(visualInspection, draft, inspection) {
 export function evaluateThumbnailCandidate({ draft, media, modelResult, inspection, visualInspection }) {
   const issues = [];
   const modelQa = modelResult?.qa;
-  if (!modelResult?.success) issues.push(issue('thumbnail-generation-unsuccessful', 'Hermes ne confirme pas la génération'));
+  const providerDeclaredSuccess = modelResult?.providerDeclaredSuccess ?? modelResult?.success === true;
+  const recoveredFromUnconfirmedGeneration = (
+    providerDeclaredSuccess === false
+    && modelResult?.recoveredFromUnconfirmedGeneration === true
+  );
+  if (modelResult?.success !== true && !recoveredFromUnconfirmedGeneration) {
+    issues.push(issue('thumbnail-generation-unsuccessful', 'Hermes ne confirme pas la génération'));
+  }
   const headlineWords = thumbnailHeadlineWordCount(draft?.bannerBrief?.headline);
   if (headlineWords !== 0 && (headlineWords < 2 || headlineWords > 4)) {
     issues.push(issue('thumbnail-headline-word-count-invalid', `Le headline doit être vide ou contenir 2 à 4 mots; ${headlineWords} reçus`));
@@ -250,6 +257,10 @@ export function evaluateThumbnailCandidate({ draft, media, modelResult, inspecti
     visualInspection: visualInspection || null,
     inspectionMode: 'deterministic-pixels-plus-independent-hermes-vision',
     modelQa: modelQa || null,
+    generationProvenance: {
+      providerDeclaredSuccess,
+      recoveredFromUnconfirmedGeneration,
+    },
   };
 }
 

@@ -436,7 +436,13 @@ export async function generateThumbnailWithQa({
         : buildBannerRepairPrompt({ media, draft, issues: previousIssues, attempt });
       modelResult = await hermes.generateBannerJson(prompt);
       const imageSource = modelResult?.imageSource || modelResult?.imageUrl || modelResult?.image;
-      if (!modelResult?.success || !imageSource) throw new Error('Génération d’image Hermes invalide');
+      if (!imageSource) throw new Error('Génération d’image Hermes sans asset');
+      const providerDeclaredSuccess = modelResult?.success === true;
+      modelResult = {
+        ...modelResult,
+        providerDeclaredSuccess,
+        recoveredFromUnconfirmedGeneration: !providerDeclaredSuccess,
+      };
       await materialize(imageSource, path);
       const inspection = await inspect(path, media);
       if (!hermes?.inspectThumbnailJson) throw new Error('Inspection visuelle indépendante Hermes requise');

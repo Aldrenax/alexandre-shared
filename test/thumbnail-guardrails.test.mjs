@@ -165,6 +165,90 @@ test('génération miniature: une réparation automatique reste bornée par le b
   assert.equal(budget.snapshot().attempts, 2);
 });
 
+test('génération miniature: un asset Hermes est contrôlé même si son auto-évaluation vaut false', async () => {
+  const calls = [];
+  const budget = new ThumbnailGenerationBudget({ maximumAttempts: 2, consecutiveFailureLimit: 2 });
+  const result = await generateThumbnailWithQa({
+    hermes: {
+      generateBannerJson: async () => {
+        calls.push('generate');
+        return modelResult({ success: false });
+      },
+      inspectThumbnailJson: async ({ inspection: inspected }) => {
+        calls.push('vision');
+        return { ...visualInspection(), sha256: inspected.sha256 };
+      },
+    },
+    media,
+    draft,
+    materialize: async () => { calls.push('materialize'); },
+    candidatePathForAttempt: () => '/tmp/hermes-unverified-asset.webp',
+    budget,
+    maxAttempts: 1,
+    inspect: async (path) => {
+      calls.push('inspect');
+      return { ...inspection, path };
+    },
+  });
+  assert.equal(result.passed, true, JSON.stringify(result.qa.issues));
+  assert.equal(result.modelResult.success, false);
+  assert.equal(result.modelResult.providerDeclaredSuccess, false);
+  assert.equal(result.modelResult.recoveredFromUnconfirmedGeneration, true);
+  assert.deepEqual(result.qa.generationProvenance, {
+    providerDeclaredSuccess: false,
+    recoveredFromUnconfirmedGeneration: true,
+  });
+  assert.deepEqual(calls, ['generate', 'materialize', 'inspect', 'vision']);
+});
+
+test('génération miniature: success false sans asset reste rejeté avant toute inspection', async () => {
+  let materializeCalls = 0;
+  let inspectionCalls = 0;
+  let visionCalls = 0;
+  const budget = new ThumbnailGenerationBudget({ maximumAttempts: 2, consecutiveFailureLimit: 2 });
+  const result = await generateThumbnailWithQa({
+    hermes: {
+      generateBannerJson: async () => modelResult({ success: false, imageSource: '' }),
+      inspectThumbnailJson: async () => { visionCalls += 1; return visualInspection(); },
+    },
+    media,
+    draft,
+    materialize: async () => { materializeCalls += 1; },
+    candidatePathForAttempt: () => '/tmp/hermes-missing-asset.webp',
+    budget,
+    maxAttempts: 1,
+    inspect: async () => { inspectionCalls += 1; return inspection; },
+  });
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.qa.issueCodes, ['thumbnail-generation-error']);
+  assert.match(result.qa.issues[0].message, /sans asset/u);
+  assert.equal(materializeCalls, 0);
+  assert.equal(inspectionCalls, 0);
+  assert.equal(visionCalls, 0);
+});
+
+test('génération miniature: l’asset non auto-validé reste bloqué si la vision indépendante échoue', async () => {
+  const budget = new ThumbnailGenerationBudget({ maximumAttempts: 2, consecutiveFailureLimit: 2 });
+  const result = await generateThumbnailWithQa({
+    hermes: {
+      generateBannerJson: async () => modelResult({ success: false }),
+      inspectThumbnailJson: async ({ inspection: inspected }) => ({
+        ...visualInspection({ success: false }),
+        sha256: inspected.sha256,
+      }),
+    },
+    media,
+    draft,
+    materialize: async () => {},
+    candidatePathForAttempt: () => '/tmp/hermes-rejected-by-vision.webp',
+    budget,
+    maxAttempts: 1,
+    inspect: async (path) => ({ ...inspection, path }),
+  });
+  assert.equal(result.passed, false);
+  assert.ok(result.qa.issueCodes.includes('thumbnail-independent-vision-failed'));
+});
+
 test('génération miniature: le coupe-circuit interrompt une série d’échecs', async () => {
   const budget = new ThumbnailGenerationBudget({ maximumAttempts: 100, consecutiveFailureLimit: 2, failureRateWindow: 20 });
   const result = await generateThumbnailWithQa({
