@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { MediaEngine, materializeBanner } from '../media/engine.mjs';
 import { ARTICLE_THUMBNAIL_POLICY } from '../media/editorial.mjs';
 import { loadEnvironmentFile } from '../media/environment.mjs';
 import { mediaBySlug } from '../media/registry.mjs';
-import { writeJsonAtomic } from '../media/state-store.mjs';
+import { readJson, writeJsonAtomic } from '../media/state-store.mjs';
 import {
   generateThumbnailWithQa,
   promoteThumbnailCandidate,
   ThumbnailGenerationBudget,
 } from '../media/thumbnail-generation.mjs';
-import { thumbnailRefreshSelection } from '../media/thumbnail-refresh.mjs';
+import {
+  persistReconciledThumbnail,
+  reconciledThumbnailDraft,
+  thumbnailRefreshQueueDecision,
+  thumbnailRefreshSelection,
+} from '../media/thumbnail-refresh.mjs';
 
 loadEnvironmentFile(process.env.MEDIA_ENGINE_ENV_FILE || '/etc/alexandre-media-engine/media-engine.env');
 
@@ -23,11 +29,6 @@ function argument(name, fallback = null) {
 function positiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function due(value, now = new Date()) {
-  const timestamp = Date.parse(value || '');
-  return !Number.isFinite(timestamp) || timestamp <= now.getTime();
 }
 
 function retryDelayMinutes(attempts) {
@@ -81,7 +82,7 @@ const entries = thumbnailRefreshSelection(engine.store.listDrafts(mediaSlug))
   .filter(({ draft }) => !newsOnly || draft?.contentType === 'news')
   .filter(({ draft }) => {
     const queued = queueById.get(queueId(draft));
-    return !queued?.nextAttemptAt || due(queued.nextAttemptAt);
+    return thumbnailRefreshQueueDecision(queued, { maxTotalAttempts }).selected;
   });
 
 const planned = entries.map(({ path, draft }) => ({
@@ -99,6 +100,11 @@ if (!apply) {
 }
 
 engine.store.initialize();
+for (const queued of queueById.values()) {
+  if (queued?.status === 'quarantined' && queued.queueId) {
+    engine.store.removeQueueEntry('publication-ready', queued.queueId);
+  }
+}
 const results = [];
 for (const { path: draftPath, draft: originalDraft } of entries) {
   const media = mediaBySlug(originalDraft.mediaSlug);
@@ -110,9 +116,7 @@ for (const { path: draftPath, draft: originalDraft } of entries) {
     continue;
   }
   if (previousAttempts >= maxTotalAttempts) {
-    const qa = previousQueue.qa || { passed: false, issues: [{ code: 'thumbnail-retry-budget-exhausted', severity: 'error' }] };
-    failureEvent(engine, originalDraft, draftPath, qa, previousAttempts, 'quarantined');
-    results.push({ mediaSlug: media.slug, slug: originalDraft.slug, status: 'quarantined', attempts: previousAttempts, qa });
+    results.push({ mediaSlug: media.slug, slug: originalDraft.slug, status: 'already-quarantined', attempts: previousAttempts });
     continue;
   }
   if (!budget.canAttempt().allowed) break;
@@ -138,32 +142,51 @@ for (const { path: draftPath, draft: originalDraft } of entries) {
       stamp,
     });
     const refreshedAt = new Date().toISOString();
-    const draft = {
-      ...originalDraft,
-      banner: {
-        path: finalPath,
-        alt: thumbnail.modelResult?.alt || originalDraft.bannerBrief?.alt || originalDraft.title,
-        width: 1_280,
-        height: 720,
-        source: `hermes:image_gen:${ARTICLE_THUMBNAIL_POLICY}`,
-        qa: {
-          ...thumbnail.qa,
-          inspection: { ...thumbnail.qa.inspection, path: finalPath },
-        },
-        attempts: allAttempts,
+    const banner = {
+      path: finalPath,
+      alt: thumbnail.modelResult?.alt || originalDraft.bannerBrief?.alt || originalDraft.title,
+      width: 1_280,
+      height: 720,
+      source: `hermes:image_gen:${ARTICLE_THUMBNAIL_POLICY}`,
+      qa: {
+        ...thumbnail.qa,
+        inspection: { ...thumbnail.qa.inspection, path: finalPath },
       },
-      thumbnailRefresh: {
-        refreshedAt,
-        backupPath: promoted.backupPath,
-        policy: ARTICLE_THUMBNAIL_POLICY,
-        status: 'qa-passed',
-        attempts: totalAttempts,
-        scope: 'local-draft-only',
-      },
+      attempts: allAttempts,
     };
-    writeJsonAtomic(draftPath, draft);
+    const candidateQueueId = `${media.slug}-${originalDraft.candidateId}`;
+    const candidate = readJson(engine.store.queuePath('qualified', candidateQueueId), null)
+      || readJson(engine.store.queuePath('candidates', candidateQueueId), null);
+    const alreadyPublished = [
+      join(engine.store.stateDir, 'wordpress-publication-receipts', media.slug, `${originalDraft.slug}.json`),
+      join(engine.store.stateDir, 'publication-receipts', media.slug, `${originalDraft.slug}.json`),
+    ].some((path) => existsSync(path));
+    const reconciled = reconciledThumbnailDraft({
+      originalDraft,
+      banner,
+      media,
+      candidate,
+      alreadyPublished,
+      refreshedAt,
+      backupPath: promoted.backupPath,
+      attempts: totalAttempts,
+    });
+    const publicationQueuePath = persistReconciledThumbnail({
+      store: engine.store,
+      draftPath,
+      ...reconciled,
+    });
     engine.store.removeQueueEntry('thumbnail-refresh', id);
-    results.push({ mediaSlug: media.slug, slug: draft.slug, status: 'refreshed', bannerPath: finalPath, backupPath: promoted.backupPath, attempts: totalAttempts });
+    results.push({
+      mediaSlug: media.slug,
+      slug: reconciled.draft.slug,
+      status: reconciled.publicationReady ? 'refreshed-requeued' : 'refreshed-local-only',
+      bannerPath: finalPath,
+      backupPath: promoted.backupPath,
+      attempts: totalAttempts,
+      publicationQueuePath,
+      publicAssetUpdated: false,
+    });
     continue;
   }
 
@@ -186,6 +209,7 @@ for (const { path: draftPath, draft: originalDraft } of entries) {
     qa: thumbnail.qa,
     circuitReason: thumbnail.circuitReason,
   };
+  engine.store.removeQueueEntry('publication-ready', id);
   engine.store.enqueue('thumbnail-refresh', id, queuePayload);
   failureEvent(engine, originalDraft, draftPath, thumbnail.qa, totalAttempts, queuePayload.status);
   writeJsonAtomic(draftPath, {
