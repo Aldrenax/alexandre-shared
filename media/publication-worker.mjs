@@ -51,6 +51,12 @@ function positiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function publicationLimit(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  if (parsed === 0) return Number.POSITIVE_INFINITY;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function commaSeparatedSet(value) {
   return new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean));
 }
@@ -220,15 +226,15 @@ export class PublicationWorker {
     const now = this.now();
     const today = dayKey(now);
     const todayReceipts = receipts.filter((receipt) => dayKey(receipt.publishedAt) === today);
-    const dailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT, 10);
-    const newsNetworkDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_NEWS_DAILY_LIMIT, 8);
-    const extraNewsNetworkDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_EXTRA_NEWS_DAILY_LIMIT, 2);
-    const nonNewsNetworkDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_NON_NEWS_DAILY_LIMIT, 2);
-    const perMediaLimit = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT, 2);
-    const newsDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_NEWS_PER_MEDIA_DAILY_LIMIT, 2);
-    const nonNewsPerMediaDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_NON_NEWS_PER_MEDIA_DAILY_LIMIT, 1);
-    const videoDailyLimit = positiveInteger(this.env.MEDIA_ENGINE_VIDEO_PER_MEDIA_DAILY_LIMIT, 1);
-    const guideWeeklyLimit = positiveInteger(this.env.MEDIA_ENGINE_GUIDE_PER_MEDIA_WEEKLY_LIMIT, 1);
+    const dailyLimit = publicationLimit(this.env.MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT, 10);
+    const newsNetworkDailyLimit = publicationLimit(this.env.MEDIA_ENGINE_PUBLICATION_NEWS_DAILY_LIMIT, 8);
+    const extraNewsNetworkDailyLimit = publicationLimit(this.env.MEDIA_ENGINE_PUBLICATION_EXTRA_NEWS_DAILY_LIMIT, 2);
+    const nonNewsNetworkDailyLimit = publicationLimit(this.env.MEDIA_ENGINE_PUBLICATION_NON_NEWS_DAILY_LIMIT, 2);
+    const perMediaLimit = publicationLimit(this.env.MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT, 2);
+    const newsDailyLimit = publicationLimit(this.env.MEDIA_ENGINE_NEWS_PER_MEDIA_DAILY_LIMIT, 2);
+    const nonNewsPerMediaDailyLimit = publicationLimit(this.env.MEDIA_ENGINE_NON_NEWS_PER_MEDIA_DAILY_LIMIT, 1);
+    const videoDailyLimit = publicationLimit(this.env.MEDIA_ENGINE_VIDEO_PER_MEDIA_DAILY_LIMIT, 1);
+    const guideWeeklyLimit = publicationLimit(this.env.MEDIA_ENGINE_GUIDE_PER_MEDIA_WEEKLY_LIMIT, 1);
     const minIntervalMinutes = positiveInteger(this.env.MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES, 60);
     const perMediaMinIntervalMinutes = positiveInteger(
       this.env.MEDIA_ENGINE_PUBLICATION_PER_MEDIA_MIN_INTERVAL_MINUTES,

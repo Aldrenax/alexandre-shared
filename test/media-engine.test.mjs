@@ -1493,6 +1493,47 @@ test('publication automatique: l’ancienne limite média reste compatible et ex
   assert.ok(!blockers.some((blocker) => blocker.startsWith('media-video-daily-limit-')));
 });
 
+test('publication automatique: zéro désactive les plafonds sans désactiver les contrôles de cadence', () => {
+  const now = new Date('2026-08-12T18:59:00.000Z');
+  const env = {
+    MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_PUBLICATION_NEWS_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_PUBLICATION_EXTRA_NEWS_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_PUBLICATION_NON_NEWS_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_NEWS_PER_MEDIA_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_NON_NEWS_PER_MEDIA_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_VIDEO_PER_MEDIA_DAILY_LIMIT: '0',
+    MEDIA_ENGINE_GUIDE_PER_MEDIA_WEEKLY_LIMIT: '0',
+    MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES: '60',
+    MEDIA_ENGINE_PUBLICATION_PER_MEDIA_MIN_INTERVAL_MINUTES: '240',
+  };
+  const worker = new PublicationWorker({
+    store: new MediaStateStore(mkdtempSync(join(tmpdir(), 'media-publication-unlimited-'))),
+    env,
+    now: () => now,
+  });
+  const oldReceipts = Array.from({ length: 18 }, (_, index) => ({
+    mediaSlug: 'tesla-tech',
+    contentType: index % 3 === 0 ? 'guide' : index % 2 ? 'video' : 'news',
+    publishedAt: `2026-08-12T${String(index).padStart(2, '0')}:00:00.000Z`,
+  }));
+
+  for (const contentType of ['news', 'video', 'guide']) {
+    const blockers = worker.queueBlockersFor({ mediaSlug: 'tesla-tech', contentType }, oldReceipts);
+    assert.ok(!blockers.some((blocker) => blocker.includes('-limit-')), blockers.join(', '));
+  }
+
+  const recentReceipt = [{
+    mediaSlug: 'tesla-tech',
+    contentType: 'news',
+    publishedAt: '2026-08-12T18:30:00.000Z',
+  }];
+  const blockers = worker.queueBlockersFor({ mediaSlug: 'tesla-tech', contentType: 'news' }, recentReceipt);
+  assert.ok(blockers.some((blocker) => blocker.startsWith('network-cooldown-until-')));
+  assert.ok(blockers.some((blocker) => blocker.startsWith('media-cooldown-tesla-tech-until-')));
+});
+
 test('publication automatique: la priorité est première news, vidéo, seconde news, guide', async () => {
   const root = mkdtempSync(join(tmpdir(), 'media-publication-priority-'));
   const store = new MediaStateStore(root);

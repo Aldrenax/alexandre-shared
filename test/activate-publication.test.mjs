@@ -173,8 +173,11 @@ test('activation publication: succès seulement avec publisher actif et legacy e
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(readFileSync(value.observedPath, 'utf8'), value.oldPublicationEnv);
   const publicationEnv = readFileSync(join(value.configDir, 'publication.env'), 'utf8');
-  assert.match(publicationEnv, /MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT=10/);
-  assert.match(publicationEnv, /MEDIA_ENGINE_PUBLICATION_EXTRA_NEWS_DAILY_LIMIT=2/);
+  assert.match(publicationEnv, /MEDIA_ENGINE_PUBLICATION_DAILY_LIMIT=36/);
+  assert.match(publicationEnv, /MEDIA_ENGINE_PUBLICATION_EXTRA_NEWS_DAILY_LIMIT=6/);
+  assert.match(publicationEnv, /MEDIA_ENGINE_PUBLICATION_PER_MEDIA_DAILY_LIMIT=6/);
+  assert.match(publicationEnv, /MEDIA_ENGINE_PUBLICATION_MIN_INTERVAL_MINUTES=10/);
+  assert.match(publicationEnv, /MEDIA_ENGINE_PUBLICATION_PER_MEDIA_MIN_INTERVAL_MINUTES=60/);
   assert.deepEqual(timerState(value)[publisherTimer], { enabled: true, active: true });
   for (const unit of legacyTimers) {
     assert.deepEqual(timerState(value)[unit], { enabled: false, active: false });
